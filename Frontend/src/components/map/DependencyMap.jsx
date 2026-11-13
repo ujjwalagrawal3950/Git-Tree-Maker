@@ -9,56 +9,59 @@ import {
 import { buildElements } from './buildElements'
 import FileNode from './FileNode'
 import FolderNode from './FolderNode'
+import SymbolNode from './SymbolNode'
+import ExternalNode from './ExternalNode'
+import { applyGraphSelectionTones } from '../../lib/graphTransformer'
+import { layoutGraphElements } from '../../lib/graphLayout'
 
-const nodeTypes = { folder: FolderNode, file: FileNode }
-
-const TONE_COLOR = {
-  default: 'var(--edge)',
-  dim: 'var(--edge)',
-  incoming: 'var(--incoming)',
-  outgoing: 'var(--outgoing)',
+const nodeTypes = {
+  folder: FolderNode,
+  file: FileNode,
+  symbol: SymbolNode,
+  external: ExternalNode,
 }
 
-function toFlowNodes(nodes, onToggleFolder, onSelectFile) {
-  return nodes.map((node) => ({
-    ...node,
-    data: {
-      ...node.data,
-      ...(node.type === 'folder'
-        ? { onToggle: onToggleFolder }
-        : { onSelect: onSelectFile }),
-    },
-  }))
+const TONE_COLOR = {
+  default: 'var(--edge, #64748b)',
+  dim: 'var(--edge, #64748b)',
+  incoming: 'var(--incoming, #22c55e)',
+  outgoing: 'var(--outgoing, #3b82f6)',
 }
 
 function toFlowEdges(edges) {
   return edges.map((edge) => {
-    const color = TONE_COLOR[edge.tone]
-    const emphasized = edge.tone === 'incoming' || edge.tone === 'outgoing'
-    const dimmed = edge.tone === 'dim'
+    const tone = edge.tone || 'default'
+    const color = TONE_COLOR[tone] || TONE_COLOR.default
+    const emphasized = tone === 'incoming' || tone === 'outgoing' || Boolean(edge.selected)
+    const dimmed = tone === 'dim'
+
+    const label =
+      edge.label ||
+      (edge.count > 1 ? String(edge.count) : edge.data?.edgeType !== 'depends_on' ? edge.data?.edgeType : undefined)
 
     return {
       ...edge,
       type: 'smoothstep',
-      label: edge.count > 1 ? String(edge.count) : undefined,
-      labelShowBg: true,
+      label,
+      labelShowBg: Boolean(label),
       labelBgPadding: [4, 2],
       labelBgBorderRadius: 2,
       labelBgStyle: {
-        fill: 'var(--canvas)',
-        stroke: 'var(--border)',
+        fill: 'var(--canvas, #0f172a)',
+        stroke: 'var(--border, #334155)',
         strokeWidth: 1,
       },
       labelStyle: {
-        fill: 'var(--text-muted)',
+        fill: 'var(--text-muted, #94a3b8)',
         fontSize: 10,
-        fontFamily: 'var(--font-mono)',
+        fontFamily: 'var(--font-mono, monospace)',
         opacity: dimmed ? 0.4 : 1,
       },
       style: {
         stroke: color,
-        strokeWidth: emphasized ? 1.8 : 1.2,
-        opacity: dimmed ? 0.16 : 1,
+        strokeWidth: emphasized ? 2.2 : 1.2,
+        opacity: dimmed ? 0.2 : 1,
+        cursor: 'pointer',
       },
       markerEnd: {
         type: MarkerType.ArrowClosed,
@@ -66,54 +69,159 @@ function toFlowEdges(edges) {
         width: 14,
         height: 14,
       },
-      focusable: false,
     }
   })
 }
 
 export default function DependencyMap({
   repository,
+  backendNodes,
+  backendEdges,
+  isTruncated,
   expandedFolder,
   selectedFileId,
+  selectedNodeId,
+  selectedEdgeId,
   onToggleFolder,
   onSelectFile,
+  onSelectNode,
+  onSelectEdge,
   onClearSelection,
 }) {
-  const model = useMemo(
-    () => buildElements(repository, expandedFolder, selectedFileId),
-    [repository, expandedFolder, selectedFileId],
-  )
+  const isBackendMode = Boolean(backendNodes && backendNodes.length > 0)
+  const effectiveSelectedNodeId = selectedNodeId || selectedFileId
 
-  const flowNodes = useMemo(
-    () => toFlowNodes(model.nodes, onToggleFolder, onSelectFile),
-    [model.nodes, onToggleFolder, onSelectFile],
-  )
-  const flowEdges = useMemo(() => toFlowEdges(model.edges), [model.edges])
+  // Layout for backend nodes & edges
+  const backendPositionedNodes = useMemo(() => {
+    if (!isBackendMode) return []
+    return layoutGraphElements(backendNodes, backendEdges || [])
+  }, [isBackendMode, backendNodes, backendEdges])
+
+  // Elements for mock repository
+  const mockModel = useMemo(() => {
+    if (isBackendMode || !repository) return { nodes: [], edges: [] }
+    return buildElements(repository, expandedFolder, effectiveSelectedNodeId)
+  }, [isBackendMode, repository, expandedFolder, effectiveSelectedNodeId])
+
+  // Prepare final React Flow nodes
+  const flowNodes = useMemo(() => {
+    if (isBackendMode) {
+      return backendPositionedNodes.map((node) => ({
+        ...node,
+        data: {
+          ...node.data,
+          selected: node.id === effectiveSelectedNodeId,
+          dimmed:
+            effectiveSelectedNodeId &&
+            node.id !== effectiveSelectedNodeId &&
+            !(backendEdges || []).some(
+              (e) =>
+                (e.source === effectiveSelectedNodeId && e.target === node.id) ||
+                (e.target === effectiveSelectedNodeId && e.source === node.id),
+            ),
+          onSelect: onSelectNode || onSelectFile,
+        },
+      }))
+    }
+
+    return mockModel.nodes.map((node) => ({
+      ...node,
+      data: {
+        ...node.data,
+        ...(node.type === 'folder'
+          ? { onToggle: onToggleFolder }
+          : { onSelect: onSelectFile }),
+      },
+    }))
+  }, [
+    isBackendMode,
+    backendPositionedNodes,
+    backendEdges,
+    mockModel.nodes,
+    effectiveSelectedNodeId,
+    onSelectNode,
+    onSelectFile,
+    onToggleFolder,
+  ])
+
+  // Prepare final React Flow edges with selection tones
+  const flowEdges = useMemo(() => {
+    if (isBackendMode) {
+      const edgesWithTones = applyGraphSelectionTones(
+        backendEdges || [],
+        effectiveSelectedNodeId,
+        selectedEdgeId,
+      )
+      return toFlowEdges(edgesWithTones)
+    }
+
+    return toFlowEdges(mockModel.edges)
+  }, [isBackendMode, backendEdges, effectiveSelectedNodeId, selectedEdgeId, mockModel.edges])
 
   const handleNodeClick = useCallback(
     (_event, node) => {
-      if (node.type === 'folder') onToggleFolder(node.data.folderId)
-      if (node.type === 'file') onSelectFile(node.data.file.id)
+      if (node.type === 'folder' && onToggleFolder) {
+        onToggleFolder(node.data.folderId)
+      } else if (onSelectNode) {
+        onSelectNode(node.id)
+      } else if (onSelectFile) {
+        onSelectFile(node.data.file?.id || node.id)
+      }
     },
-    [onToggleFolder, onSelectFile],
+    [onToggleFolder, onSelectNode, onSelectFile],
+  )
+
+  const handleEdgeClick = useCallback(
+    (_event, edge) => {
+      if (onSelectEdge) {
+        onSelectEdge(edge.id)
+      }
+    },
+    [onSelectEdge],
   )
 
   return (
-    <div className="map-canvas">
+    <div className="map-canvas" style={{ position: 'relative', width: '100%', height: '100%' }}>
+      {isTruncated && (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            position: 'absolute',
+            top: 12,
+            right: 12,
+            zIndex: 10,
+            background: 'rgba(234, 88, 12, 0.9)',
+            color: '#fff',
+            padding: '6px 12px',
+            borderRadius: '6px',
+            fontSize: '11px',
+            fontWeight: 500,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+          }}
+        >
+          <span>Bounded neighborhood: node limit reached (subgraph truncated)</span>
+        </div>
+      )}
+
       <ReactFlow
-        key={`${expandedFolder ?? 'collapsed'}:${selectedFileId ? 'detail' : 'full'}`}
+        key={isBackendMode ? `backend:${backendNodes.length}:${backendEdges?.length || 0}` : `${expandedFolder ?? 'collapsed'}:${effectiveSelectedNodeId ? 'detail' : 'full'}`}
         nodes={flowNodes}
         edges={flowEdges}
         nodeTypes={nodeTypes}
         onNodeClick={handleNodeClick}
+        onEdgeClick={handleEdgeClick}
         onPaneClick={onClearSelection}
         nodesDraggable={false}
         nodesConnectable={false}
         nodesFocusable={false}
         edgesFocusable={false}
-        elementsSelectable={false}
-        minZoom={0.2}
-        maxZoom={1.8}
+        elementsSelectable={true}
+        minZoom={0.15}
+        maxZoom={2.0}
         fitView
         fitViewOptions={{ padding: 0.18 }}
         defaultEdgeOptions={{ type: 'smoothstep' }}

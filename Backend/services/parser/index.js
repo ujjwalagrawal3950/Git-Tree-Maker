@@ -8,9 +8,11 @@ const { PythonAdapter } = require("./adapters/python/PythonAdapter");
 const { JavaAdapter } = require("./adapters/java/JavaAdapter");
 const { CAdapter } = require("./adapters/c/CAdapter");
 const { CppAdapter } = require("./adapters/cpp/CppAdapter");
+const { HeaderAdapter } = require("./adapters/c_cpp_shared/HeaderAdapter");
 const { JavaScriptModuleResolver } = require("./resolvers/javascript/JavaScriptModuleResolver");
 const { PythonImportResolver } = require("./resolvers/python/PythonImportResolver");
 const { JavaImportResolver } = require("./resolvers/java/JavaImportResolver");
+const { CppIncludeResolver } = require("./resolvers/c_cpp/CppIncludeResolver");
 const irBuilder = require("./irBuilder");
 const irValidator = require("./irValidator");
 
@@ -45,9 +47,11 @@ module.exports = {
   JavaAdapter,
   CAdapter,
   CppAdapter,
+  HeaderAdapter,
   JavaScriptModuleResolver,
   PythonImportResolver,
   JavaImportResolver,
+  CppIncludeResolver,
   irBuilder,
   irValidator,
 };

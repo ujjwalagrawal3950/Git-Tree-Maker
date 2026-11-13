@@ -87,6 +87,7 @@ const { PythonAdapter } = require("./adapters/python/PythonAdapter");
 const { JavaAdapter } = require("./adapters/java/JavaAdapter");
 const { CAdapter } = require("./adapters/c/CAdapter");
 const { CppAdapter } = require("./adapters/cpp/CppAdapter");
+const { HeaderAdapter } = require("./adapters/c_cpp_shared/HeaderAdapter");
 
 defaultRegistry.registerAdapter(new JavaScriptAdapter());
 defaultRegistry.registerAdapter(new TypeScriptAdapter());
@@ -94,6 +95,7 @@ defaultRegistry.registerAdapter(new PythonAdapter());
 defaultRegistry.registerAdapter(new JavaAdapter());
 defaultRegistry.registerAdapter(new CAdapter());
 defaultRegistry.registerAdapter(new CppAdapter());
+defaultRegistry.registerAdapter(new HeaderAdapter());
 
 module.exports = {
   ParserRegistry,

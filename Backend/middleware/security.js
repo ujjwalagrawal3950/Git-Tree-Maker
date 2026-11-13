@@ -53,7 +53,7 @@ function cors(req, res, next) {
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE");
     res.setHeader(
       "Access-Control-Allow-Headers",
-      "Content-Type, Authorization, svix-id, svix-timestamp, svix-signature"
+      "Content-Type, Authorization, x-organization-id, svix-id, svix-timestamp, svix-signature"
     );
     res.setHeader("Access-Control-Max-Age", "600");
   }

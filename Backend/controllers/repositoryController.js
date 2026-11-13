@@ -19,7 +19,7 @@ async function ensureTenantAuthorization(req) {
     throw new AppError(401, "UNAUTHENTICATED", "Sign in is required.");
   }
 
-  let orgId = req.params.orgId || req.actor.orgId;
+  let orgId = req.params?.orgId || req.actor?.orgId || (req.headers && req.headers["x-organization-id"]);
   if (!orgId) {
     try {
       const userOrgs = await organizations.listOrganizationsForUser(req.actor.userId);
@@ -211,6 +211,7 @@ async function parseRepository(req, res) {
 }
 
 module.exports = {
+  ensureTenantAuthorization,
   verifyRepository,
   generateManifest,
   retrieveFiles,

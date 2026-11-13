@@ -2,8 +2,15 @@ import { Handle, Position } from '@xyflow/react'
 import { getKindMeta } from '../../lib/kinds'
 
 export default function FileNode({ data }) {
-  const { file, selected, dimmed, onSelect } = data
-  const meta = getKindMeta(file.kind)
+  const file = data.file || data.rawNode || data
+  const canonicalId = data.canonicalId || file.id
+  const name = data.label || file.name || (data.path ? data.path.split('/').pop() : canonicalId)
+  const path = data.path || file.path || canonicalId
+  const kind = data.kind || data.language || file.kind || 'file'
+  const meta = getKindMeta(kind)
+
+  const selected = Boolean(data.selected)
+  const dimmed = Boolean(data.dimmed)
 
   return (
     <div
@@ -26,15 +33,17 @@ export default function FileNode({ data }) {
       <button
         type="button"
         className="file-node__button"
-        title={file.path}
+        title={path}
         aria-pressed={selected}
         onClick={(event) => {
           event.stopPropagation()
-          onSelect(file.id)
+          if (typeof data.onSelect === 'function') {
+            data.onSelect(canonicalId)
+          }
         }}
       >
         <span className="file-node__dot" />
-        <span className="file-node__name">{file.name}</span>
+        <span className="file-node__name">{name}</span>
         <span className="file-node__kind">{meta.label}</span>
       </button>
 

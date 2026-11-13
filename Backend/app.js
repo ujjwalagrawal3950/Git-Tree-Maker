@@ -13,6 +13,7 @@ const { handleClerkWebhook } = require("./controllers/webhookController");
 const userRoutes = require("./routes/userRoutes");
 const organizationRoutes = require("./routes/organizationRoutes");
 const repositoryRoutes = require("./routes/repositoryRoutes");
+const graphRoutes = require("./routes/graphRoutes");
 
 const app = express();
 
@@ -57,6 +58,7 @@ app.use(
 app.use("/api", userRoutes);
 app.use("/api", organizationRoutes);
 app.use("/api", repositoryRoutes);
+app.use("/api", graphRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

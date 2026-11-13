@@ -29,6 +29,10 @@ const SOURCE_LANGUAGES = {
     name: "C++",
     extensions: [".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx"],
   },
+  c_cpp_header: {
+    name: "C/C++ Header",
+    extensions: [".h"],
+  },
   go: {
     name: "Go",
     extensions: [".go"],
