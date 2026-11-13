@@ -1,0 +1,958 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cartograph.local/schemas/file-ir-1.0.0.json",
+  "title": "Cartograph FileIR",
+  "description": "Versioned, language-neutral syntax facts for one repository file at one immutable commit.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "irVersion",
+    "analysis",
+    "parser",
+    "symbols",
+    "imports",
+    "exports",
+    "occurrences",
+    "callSites",
+    "typeReferences",
+    "inheritance",
+    "diagnostics",
+    "stats"
+  ],
+  "properties": {
+    "irVersion": {
+      "const": "1.0.0"
+    },
+    "analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "file"
+      ],
+      "properties": {
+        "repository": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "provider",
+            "owner",
+            "name",
+            "fullName",
+            "commitSha"
+          ],
+          "properties": {
+            "provider": {
+              "const": "github"
+            },
+            "owner": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "fullName": {
+              "type": "string",
+              "minLength": 3
+            },
+            "commitSha": {
+              "type": "string",
+              "minLength": 7
+            }
+          }
+        },
+        "file": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "fileId",
+            "path",
+            "blobSha",
+            "language",
+            "category",
+            "sizeBytes"
+          ],
+          "properties": {
+            "fileId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "blobSha": {
+              "type": "string",
+              "minLength": 1
+            },
+            "language": {
+              "type": "string",
+              "minLength": 1
+            },
+            "category": {
+              "enum": [
+                "source",
+                "dependency_manifest",
+                "configuration",
+                "build",
+                "schema",
+                "documentation",
+                "other"
+              ]
+            },
+            "sizeBytes": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "parser": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "adapterId",
+        "adapterVersion",
+        "engine",
+        "engineVersion",
+        "grammarVersion",
+        "status",
+        "capabilities",
+        "durationMs"
+      ],
+      "properties": {
+        "adapterId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "adapterVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "engine": {
+          "type": "string",
+          "minLength": 1
+        },
+        "engineVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "grammarVersion": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "enum": [
+            "complete",
+            "partial",
+            "unsupported",
+            "failed",
+            "skipped"
+          ]
+        },
+        "capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "symbols",
+              "imports",
+              "exports",
+              "occurrences",
+              "calls",
+              "type_references",
+              "inheritance",
+              "documentation"
+            ]
+          }
+        },
+        "durationMs": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "symbols": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/symbol"
+      }
+    },
+    "imports": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/import"
+      }
+    },
+    "exports": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/export"
+      }
+    },
+    "occurrences": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/occurrence"
+      }
+    },
+    "callSites": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/callSite"
+      }
+    },
+    "typeReferences": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/typeReference"
+      }
+    },
+    "inheritance": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/inheritance"
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/diagnostic"
+      }
+    },
+    "stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lines",
+        "symbols",
+        "imports",
+        "exports",
+        "occurrences",
+        "callSites",
+        "typeReferences"
+      ],
+      "properties": {
+        "lines": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "symbols": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "imports": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "exports": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "occurrences": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "callSites": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "typeReferences": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  },
+  "$defs": {
+    "position": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "line",
+        "column"
+      ],
+      "properties": {
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "end"
+      ],
+      "properties": {
+        "start": {
+          "$ref": "#/$defs/position"
+        },
+        "end": {
+          "$ref": "#/$defs/position"
+        }
+      }
+    },
+    "typeDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "text",
+        "kind",
+        "isInferred"
+      ],
+      "properties": {
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "named",
+            "primitive",
+            "generic",
+            "union",
+            "intersection",
+            "function",
+            "array",
+            "tuple",
+            "unknown"
+          ]
+        },
+        "isInferred": {
+          "type": "boolean"
+        }
+      }
+    },
+    "parameter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "position",
+        "type",
+        "optional",
+        "variadic",
+        "defaultValueText",
+        "location"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "$ref": "#/$defs/typeDescriptor"
+        },
+        "optional": {
+          "type": "boolean"
+        },
+        "variadic": {
+          "type": "boolean"
+        },
+        "defaultValueText": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "location": {
+          "$ref": "#/$defs/location"
+        }
+      }
+    },
+    "symbol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "qualifiedName",
+        "kind",
+        "languageKind",
+        "parentSymbolId",
+        "location",
+        "nameLocation",
+        "signature",
+        "parameters",
+        "returnType",
+        "typeParameters",
+        "modifiers",
+        "visibility",
+        "isExported",
+        "languageMetadata"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "qualifiedName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "module",
+            "namespace",
+            "class",
+            "interface",
+            "struct",
+            "enum",
+            "trait",
+            "type_alias",
+            "function",
+            "method",
+            "constructor",
+            "property",
+            "field",
+            "variable",
+            "constant",
+            "parameter",
+            "enum_member",
+            "macro",
+            "annotation",
+            "unknown"
+          ]
+        },
+        "languageKind": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "parentSymbolId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "location": {
+          "$ref": "#/$defs/location"
+        },
+        "nameLocation": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/location"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "signature": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "parameters": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/parameter"
+          }
+        },
+        "returnType": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/typeDescriptor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "typeParameters": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "modifiers": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "visibility": {
+          "enum": [
+            "public",
+            "protected",
+            "private",
+            "internal",
+            "package",
+            "unknown",
+            null
+          ]
+        },
+        "isExported": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "documentation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "languageMetadata": {
+          "type": "object"
+        }
+      }
+    },
+    "specifier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "importedName",
+        "localName",
+        "isTypeOnly"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "default",
+            "named",
+            "namespace",
+            "wildcard",
+            "module",
+            "include",
+            "unknown"
+          ]
+        },
+        "importedName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "localName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "isTypeOnly": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      }
+    },
+    "import": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "rawSource",
+        "sourceKind",
+        "specifiers",
+        "location",
+        "languageMetadata"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "enum": [
+            "module_import",
+            "include",
+            "package_import",
+            "module_use",
+            "dynamic_import",
+            "require_call",
+            "unknown"
+          ]
+        },
+        "rawSource": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sourceKind": {
+          "enum": [
+            "relative",
+            "package",
+            "absolute",
+            "system",
+            "module",
+            "unknown",
+            null
+          ]
+        },
+        "specifiers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/specifier"
+          }
+        },
+        "location": {
+          "$ref": "#/$defs/location"
+        },
+        "languageMetadata": {
+          "type": "object"
+        }
+      }
+    },
+    "export": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "symbolId",
+        "exportedName",
+        "source",
+        "location",
+        "languageMetadata"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "enum": [
+            "named",
+            "default",
+            "reexport",
+            "wildcard",
+            "public_declaration",
+            "package_visibility",
+            "unknown"
+          ]
+        },
+        "symbolId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exportedName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "location": {
+          "$ref": "#/$defs/location"
+        },
+        "languageMetadata": {
+          "type": "object"
+        }
+      }
+    },
+    "occurrence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "role",
+        "context",
+        "enclosingSymbolId",
+        "location",
+        "resolution"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "enum": [
+            "declaration_name",
+            "reference",
+            "type_reference",
+            "label",
+            "property_name",
+            "unknown"
+          ]
+        },
+        "context": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "enclosingSymbolId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "location": {
+          "$ref": "#/$defs/location"
+        },
+        "resolution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "targetSymbolId"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "not_attempted",
+                "unresolved"
+              ]
+            },
+            "targetSymbolId": {
+              "type": "null"
+            }
+          }
+        }
+      }
+    },
+    "callSite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "calleeText",
+        "calleeKind",
+        "enclosingSymbolId",
+        "argumentCount",
+        "location",
+        "resolution"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "calleeText": {
+          "type": "string",
+          "minLength": 1
+        },
+        "calleeKind": {
+          "enum": [
+            "identifier",
+            "member_expression",
+            "constructor",
+            "function_pointer",
+            "operator",
+            "other"
+          ]
+        },
+        "enclosingSymbolId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "argumentCount": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "location": {
+          "$ref": "#/$defs/location"
+        },
+        "resolution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "targetSymbolId"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "not_attempted",
+                "unresolved"
+              ]
+            },
+            "targetSymbolId": {
+              "type": "null"
+            }
+          }
+        }
+      }
+    },
+    "typeReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "text",
+        "context",
+        "enclosingSymbolId",
+        "location",
+        "resolution"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "context": {
+          "enum": [
+            "parameter",
+            "return",
+            "variable",
+            "generic_argument",
+            "inheritance",
+            "cast",
+            "annotation",
+            "other"
+          ]
+        },
+        "enclosingSymbolId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "location": {
+          "$ref": "#/$defs/location"
+        },
+        "resolution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "targetSymbolId"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "not_attempted",
+                "unresolved"
+              ]
+            },
+            "targetSymbolId": {
+              "type": "null"
+            }
+          }
+        }
+      }
+    },
+    "inheritance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "targetText",
+        "sourceSymbolId",
+        "location"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "enum": [
+            "extends",
+            "implements",
+            "trait_use",
+            "mixin",
+            "protocol_conformance",
+            "unknown"
+          ]
+        },
+        "targetText": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sourceSymbolId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "location": {
+          "$ref": "#/$defs/location"
+        }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "severity",
+        "message",
+        "location"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "severity": {
+          "enum": [
+            "info",
+            "warning",
+            "error"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "location": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/location"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

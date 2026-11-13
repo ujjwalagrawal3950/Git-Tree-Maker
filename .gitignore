@@ -1,0 +1,35 @@
+# Environment files. Keep examples tracked; never commit real values.
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Dependencies and generated output
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+coverage/
+.vite/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local tooling
+.ngrok/
+
+# Database schema and migrations stay local
+Backend/schema.sql
+Backend/migrations/
