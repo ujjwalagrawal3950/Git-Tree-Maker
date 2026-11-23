@@ -252,6 +252,152 @@ function normalizeInheritanceFact(heritageFact, sourceFile, context = {}) {
 }
 
 /**
+ * Normalizes an HTTP route resolution from HttpRouteResolver.
+ *
+ * Distinguishes confirmed_exact, pattern_compatible, ambiguous, unresolved,
+ * unsupported, and external classifications without ever promoting unconfirmed
+ * or external dependencies into confirmed internal edges.
+ *
+ * @param {object} resolution - Resolution output from HttpRouteResolver
+ * @param {object} [context]
+ * @param {string} [context.resolverName="HttpRouteResolver"]
+ * @param {string} [context.resolverVersion="1.0.0"]
+ * @param {string} [context.sourceFile]
+ * @returns {object} Normalized evidence contract
+ */
+function normalizeHttpResolution(resolution, context = {}) {
+  if (!resolution || typeof resolution !== "object") {
+    throw new Error("normalizeHttpResolution requires a valid resolution object");
+  }
+
+  const clientFactId = resolution.clientFactId || resolution.id || "http_fact";
+  const rawClientFile = resolution.clientFileId || null;
+  const rawBackendFile = resolution.backendFileId || null;
+
+  // Resolve repository-relative paths for client and backend files
+  const fileIdToPath = context.fileIdToPathMap || context.filePathMap || null;
+
+  const resolveToRelativePath = (rawVal, explicitPath) => {
+    if (explicitPath && typeof explicitPath === "string" && !explicitPath.startsWith("file_")) {
+      return explicitPath;
+    }
+    if (!rawVal || typeof rawVal !== "string") return null;
+
+    // 1. Try lookup via fileIdToPathMap
+    if (fileIdToPath) {
+      if (typeof fileIdToPath.get === "function" && fileIdToPath.has(rawVal)) {
+        return fileIdToPath.get(rawVal);
+      }
+      if (typeof fileIdToPath === "object" && fileIdToPath[rawVal]) {
+        return fileIdToPath[rawVal];
+      }
+    }
+
+    // 2. If it's already a clean relative path (not starting with "file_")
+    if (!rawVal.startsWith("file_") && (rawVal.includes("/") || /\.[a-zA-Z0-9]+$/.test(rawVal))) {
+      return rawVal;
+    }
+
+    return null;
+  };
+
+  const clientFilePath = resolveToRelativePath(
+    rawClientFile,
+    resolution.clientPath || resolution.clientFilePath || context.sourceFile || context.clientPath
+  );
+  const backendFilePath = resolveToRelativePath(
+    rawBackendFile,
+    resolution.backendPath || resolution.backendFilePath || context.targetFile || context.backendPath
+  );
+
+  const sourceLocation = resolution.clientLocation || resolution.location || null;
+  const classification = resolution.classification || "unresolved";
+
+  // A confirmed HTTP edge REQUIRES valid repository-relative file paths for both endpoints.
+  // Never promote to confirmed if either endpoint cannot be mapped to a repository-relative path.
+  const hasValidRelativePaths =
+    typeof clientFilePath === "string" && clientFilePath.length > 0 &&
+    typeof backendFilePath === "string" && backendFilePath.length > 0;
+
+  const isConfirmed =
+    (classification === "confirmed_exact" || classification === "pattern_compatible") &&
+    hasValidRelativePaths;
+
+  let confidence = "none";
+  if (isConfirmed && classification === "confirmed_exact") {
+    confidence = "high";
+  } else if (isConfirmed && classification === "pattern_compatible") {
+    confidence = "medium";
+  } else if (classification === "ambiguous") {
+    confidence = "low";
+  }
+
+  let normalizedStatus = NORMALIZED_STATUSES.UNRESOLVED;
+  if (isConfirmed) {
+    normalizedStatus = NORMALIZED_STATUSES.RESOLVED;
+  } else if (classification === "ambiguous") {
+    normalizedStatus = NORMALIZED_STATUSES.AMBIGUOUS;
+  } else if (classification === "external") {
+    normalizedStatus = NORMALIZED_STATUSES.EXTERNAL_PACKAGE;
+  } else if (classification === "unsupported") {
+    normalizedStatus = NORMALIZED_STATUSES.UNSUPPORTED;
+  }
+
+  const factId = resolution.id || `${clientFactId}_resolution`;
+  const resolverName = context.resolverName || "HttpRouteResolver";
+  const resolverVersion = context.resolverVersion || resolution.resolverVersion || "1.0.0";
+  const rule = resolution.resolutionRule || "route_matching";
+
+  return {
+    id: `ev_${factId}`,
+    category: "http_request",
+    sourceFile: clientFilePath,
+    sourceFactId: clientFactId,
+    sourceLocation,
+    resolver: {
+      name: resolverName,
+      version: resolverVersion,
+      rule,
+    },
+    status: {
+      original: classification,
+      normalized: normalizedStatus,
+      isConfirmed,
+      confidence,
+      classification,
+    },
+    target: {
+      resolvedPath: backendFilePath,
+      clientFileId: rawClientFile,
+      backendFileId: rawBackendFile,
+      httpMethod: resolution.httpMethod || "GET",
+      composedRoutePath: resolution.composedRoutePath || null,
+      originalRoutePath: resolution.originalRoutePath || null,
+      rawSpecifier: resolution.rawClientEndpoint || null,
+      clientPattern: resolution.normalizedClientPattern || null,
+      backendRouteFactId: resolution.backendRouteFactId || null,
+      backendLocation: resolution.backendLocation || null,
+      mountChain: Array.isArray(resolution.mountChain) ? [...resolution.mountChain] : [],
+      candidates: Array.isArray(resolution.candidates) ? [...resolution.candidates] : null,
+    },
+    metadata: {
+      classification,
+      isPatternCompatible: classification === "pattern_compatible",
+      clientFileId: rawClientFile,
+      backendFileId: rawBackendFile,
+      clientPath: clientFilePath,
+      backendPath: backendFilePath,
+      httpMethod: resolution.httpMethod || "GET",
+      composedRoutePath: resolution.composedRoutePath || null,
+      originalRoutePath: resolution.originalRoutePath || null,
+      mountChain: Array.isArray(resolution.mountChain) ? [...resolution.mountChain] : [],
+      backendRouteFactId: resolution.backendRouteFactId || null,
+      backendLocation: resolution.backendLocation || null,
+    },
+  };
+}
+
+/**
  * Batch-normalizes resolver repository output or an array of resolution items.
  *
  * @param {object|Array<object>} resolverOutput - { files: [...], summary: {...} } or Array of resolutions
@@ -300,6 +446,7 @@ module.exports = {
   normalizeImportResolution,
   normalizeCallFact,
   normalizeInheritanceFact,
+  normalizeHttpResolution,
   normalizeResolverResults,
 };
 

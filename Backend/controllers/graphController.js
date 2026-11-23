@@ -88,6 +88,8 @@ async function buildGraph(req, res) {
 
   // 4. Obtain FileIR strictly from existing server-side parsing pipeline
   let sourceFiles = Array.isArray(body.files) ? body.files : null;
+  let manifestFiles = null;
+  let isPartialRetrieval = false;
 
   if (!sourceFiles) {
     const targetRef = body.ref || cleanSha;
@@ -99,6 +101,7 @@ async function buildGraph(req, res) {
 
     const manifest = await githubService.discoverRepositoryManifest(owner, repo, { ref: targetRef });
     effectiveSha = manifest.commitSha || cleanSha;
+    manifestFiles = manifest.files;
 
     const retrievalResult = await retrieveSourceFiles({
       owner,
@@ -113,6 +116,7 @@ async function buildGraph(req, res) {
     });
 
     sourceFiles = retrievalResult.files;
+    isPartialRetrieval = retrievalResult.status === "partial";
   }
 
   // Authoritative server-side parsing
@@ -129,13 +133,31 @@ async function buildGraph(req, res) {
 
   const authoritativeFileIRList = parseResult.files || [];
 
+  // Extract supporting files (tsconfig.json, pom.xml, etc.)
+  const supportingFiles = {};
+  if (Array.isArray(sourceFiles)) {
+    for (const sf of sourceFiles) {
+      if (sf && sf.path && sf.content) {
+        const base = sf.path.split("/").pop();
+        if (base && !supportingFiles[base]) {
+          supportingFiles[base] = sf.content;
+        }
+      }
+    }
+  }
+
   try {
     const result = await buildRepositoryGraph({
       repositoryId,
       commitSha: effectiveSha,
       fileIRList: authoritativeFileIRList,
       organizationId: orgId,
-    }, body.options || {});
+    }, {
+      ...(body.options || {}),
+      manifest: manifestFiles || (body.options && body.options.manifest) || null,
+      supportingFiles: { ...supportingFiles, ...((body.options && body.options.supportingFiles) || {}) },
+      isPartial: isPartialRetrieval || Boolean(body.options && body.options.isPartial),
+    });
 
     return res.status(201).json({
       success: true,
@@ -215,6 +237,30 @@ async function getNodeDetails(req, res) {
   return res.status(200).json({
     success: true,
     data: node,
+  });
+}
+
+/**
+ * GET /api/repositories/:repositoryId/graph/edges
+ * Retrieves paginated edges with optional filtering by type, source, or target.
+ */
+async function getEdges(req, res) {
+  const repositoryId = decodeURIComponent(req.params.repositoryId);
+  const commitSha = req.query.commitSha || null;
+
+  const queryService = await ensureAuthorizedQueryService(req, repositoryId, commitSha);
+  const result = queryService.getEdges({
+    edgeType: req.query.edgeType,
+    excludeTypes: req.query.excludeTypes,
+    source: req.query.source,
+    target: req.query.target,
+    page: req.query.page,
+    pageSize: req.query.pageSize,
+  });
+
+  return res.status(200).json({
+    success: true,
+    data: result,
   });
 }
 
@@ -375,6 +421,7 @@ module.exports = {
   buildGraph,
   getGraphSummary,
   getNodes,
+  getEdges,
   getNodeDetails,
   getOutgoingEdges,
   getIncomingEdges,

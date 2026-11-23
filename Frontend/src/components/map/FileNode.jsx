@@ -24,8 +24,16 @@ export default function FileNode({ data }) {
       style={{ '--kind': meta.color }}
     >
       <Handle
+        id="target-left"
         type="target"
         position={Position.Left}
+        className="map-handle"
+        isConnectable={false}
+      />
+      <Handle
+        id="target-right"
+        type="target"
+        position={Position.Right}
         className="map-handle"
         isConnectable={false}
       />
@@ -48,6 +56,7 @@ export default function FileNode({ data }) {
       </button>
 
       <Handle
+        id="source-right"
         type="source"
         position={Position.Right}
         className="map-handle"

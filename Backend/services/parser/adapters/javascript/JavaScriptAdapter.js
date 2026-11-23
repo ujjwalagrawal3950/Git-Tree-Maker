@@ -5,6 +5,12 @@ const { extractImports } = require("./importExtractor");
 const { extractExports } = require("./exportExtractor");
 const { extractCallSites } = require("./callExtractor");
 const { extractTypeFacts } = require("./typeExtractor");
+const { extractHttpRequests } = require("./httpRequestExtractor");
+const {
+  extractExpressFacts,
+  getExpressRouteFacts,
+  expressFactStore,
+} = require("./expressRouteExtractor");
 const { buildFileIR, createFileId } = require("../../irBuilder");
 
 /**
@@ -36,11 +42,18 @@ async function parseJsTsFile(adapter, file, options = {}) {
   const exports = extractExports(sourceFile, fileId, symbols);
   const callSites = extractCallSites(sourceFile, fileId, symbols);
   const { typeReferences, inheritance } = extractTypeFacts(sourceFile, fileId, symbols);
+  const httpRequests = extractHttpRequests(sourceFile, fileId, symbols);
+  const expressFacts = extractExpressFacts(sourceFile, fileId, {
+    symbols,
+    filePath: file.path,
+    repository,
+    moduleResolver: options.moduleResolver,
+  });
 
   const durationMs = Date.now() - startTime;
   const status = hasErrors ? "partial" : "complete";
 
-  return buildFileIR({
+  const fileIr = buildFileIR({
     repository,
     file: {
       fileId,
@@ -69,6 +82,35 @@ async function parseJsTsFile(adapter, file, options = {}) {
     inheritance,
     diagnostics,
   });
+
+  // Attach HTTP request facts as a non-enumerable property:
+  // 1. Keeps FileIR v1.0.0 JSON serialization completely pure and schema-compliant.
+  // 2. Provides direct in-memory access for future resolver pipelines (Stage 2/3).
+  Object.defineProperty(fileIr, "httpRequests", {
+    value: httpRequests,
+    enumerable: false,
+    writable: true,
+    configurable: true,
+  });
+
+  // Attach Express route and router mount facts as non-enumerable properties:
+  // 1. Keeps FileIR v1.0.0 JSON serialization completely pure and schema-compliant.
+  // 2. Provides direct in-memory access for future resolver pipelines (Stage 2/3).
+  // 3. Facts are also redundantly retained in expressFactStore by fileId for clone/serialization safety.
+  Object.defineProperty(fileIr, "expressRoutes", {
+    value: expressFacts.routes,
+    enumerable: false,
+    writable: true,
+    configurable: true,
+  });
+  Object.defineProperty(fileIr, "expressMounts", {
+    value: expressFacts.mounts,
+    enumerable: false,
+    writable: true,
+    configurable: true,
+  });
+
+  return fileIr;
 }
 
 /**
@@ -94,10 +136,26 @@ class JavaScriptAdapter extends BaseAdapter {
   async parseFile(file, options = {}) {
     return parseJsTsFile(this, file, options);
   }
+
+  extractHttpRequests(sourceFile, fileId, symbols = []) {
+    return extractHttpRequests(sourceFile, fileId, symbols);
+  }
+
+  extractExpressFacts(sourceFile, fileId, options = {}) {
+    return extractExpressFacts(sourceFile, fileId, options);
+  }
+
+  getExpressRouteFacts(fileIdOrIr) {
+    return getExpressRouteFacts(fileIdOrIr);
+  }
 }
 
 module.exports = {
   JavaScriptAdapter,
   parseJsTsFile,
+  extractHttpRequests,
+  extractExpressFacts,
+  getExpressRouteFacts,
+  expressFactStore,
 };
 

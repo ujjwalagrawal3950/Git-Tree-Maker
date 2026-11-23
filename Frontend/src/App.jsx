@@ -13,9 +13,11 @@ import { useTheme } from './hooks/useTheme'
 import { isValidGithubRepositoryUrl } from './lib/githubUrl'
 import {
   verifyRepositoryUrl,
+  fetchRepositoryManifest,
   fetchGraphSummary,
   requestBuildGraph,
   fetchGraphNodes,
+  fetchGraphEdges,
   fetchNeighborhood,
   fetchIncomingEdges,
   fetchOutgoingEdges,
@@ -24,8 +26,9 @@ import {
 import { transformGraphToFlowElements } from './lib/graphTransformer'
 import {
   buildFileMap,
+  deriveDirectoryHierarchy,
   getFileNeighbours,
-  getFolders,
+  mergeManifestWithGraph,
 } from './lib/repositoryGraph'
 
 const EMPTY_NEIGHBOURS = { imports: [], importedBy: [] }
@@ -34,7 +37,14 @@ function AppContent() {
   const { isSignedIn, getToken, orgId } = useAuth()
 
   // General navigation & theme
-  const [expandedFolder, setExpandedFolder] = useState(null)
+  const [expandedFolders, setExpandedFolders] = useState(() => new Set(['components']))
+  const expandedFolder = useMemo(() => {
+    return Array.from(expandedFolders).join(', ')
+  }, [expandedFolders])
+  const [crossDirectoryOnly, setCrossDirectoryOnly] = useState(false)
+  const [relationshipFilter, setRelationshipFilter] = useState('all') // 'all' | 'code' | 'http'
+  const [viewMode, setViewMode] = useState('detailed') // 'architecture' | 'detailed'
+  const detailedExpandedFoldersRef = useRef(new Set(['components']))
   const [repoUrl, setRepoUrl] = useState('')
   const [notice, setNotice] = useState(null)
   const [isVerifying, setIsVerifying] = useState(false)
@@ -46,9 +56,10 @@ function AppContent() {
   const [graphState, setGraphState] = useState('idle') // 'idle' | 'loading' | 'not_built' | 'empty' | 'available' | 'forbidden' | 'error'
   const [graphErrorMessage, setGraphErrorMessage] = useState(null)
   const [isBuildingGraph, setIsBuildingGraph] = useState(false)
-  const commitSha = graphSummary?.commitSha
+  const commitSha = graphSummary?.revision?.commitSha || graphSummary?.commitSha
 
   // Live graph elements (React Flow format with canonical IDs)
+  const [manifestRepository, setManifestRepository] = useState(null)
   const [backendNodes, setBackendNodes] = useState([])
   const [backendEdges, setBackendEdges] = useState([])
   const [isTruncated, setIsTruncated] = useState(false)
@@ -71,7 +82,6 @@ function AppContent() {
   // Fallback mock repository state (when no live repo is active)
   const [selectedFileId, setSelectedFileId] = useState(null)
   const fileMap = useMemo(() => buildFileMap(sampleRepository), [])
-  const folders = useMemo(() => getFolders(sampleRepository), [])
   const selectedFile = selectedFileId ? fileMap.get(selectedFileId) : null
   const neighbours = useMemo(
     () =>
@@ -121,65 +131,170 @@ function AppContent() {
 
         if (requestIdRef.current !== currentReq) return
         setGraphSummary(summary)
+        if (summary?.statistics?.isPartial) {
+          setNotice('Repository graph represents partial ingestion budget. Run incremental ingestion for complete coverage.')
+        }
 
-        const activeRevisionSha = summary.commitSha
+        const activeRevisionSha = summary?.revision?.commitSha || summary?.commitSha
 
-        // 2. Fetch initial nodes using authoritative revision SHA
-        const nodesResult = await fetchGraphNodes(
-          repositoryId,
-          token,
-          orgId,
-          { page: 1, pageSize: 80, commitSha: activeRevisionSha },
-        )
+        // 2. Fetch authoritative repository manifest
+        const targetUrl = repoUrl || `https://github.com/${repositoryId}`
+        let manifest
+        try {
+          manifest = await fetchRepositoryManifest(targetUrl, token, orgId, activeRevisionSha)
+        } catch (err) {
+          if (requestIdRef.current !== currentReq) return
+          setGraphSummary(null)
+          setManifestRepository(null)
+          setBackendNodes([])
+          setBackendEdges([])
+          setGraphState('error')
+          setGraphErrorMessage(
+            err.message || 'Repository manifest unavailable. Complete repository containment cannot be verified.',
+          )
+          return
+        }
 
         if (requestIdRef.current !== currentReq) return
 
-        const initialNodes = (nodesResult && nodesResult.nodes) || []
-        if (initialNodes.length === 0) {
+        if (!manifest || !Array.isArray(manifest.files) || manifest.files.length === 0) {
+          setManifestRepository(null)
           setBackendNodes([])
           setBackendEdges([])
           setGraphState('empty')
           return
         }
 
-        // 3. Query bounded neighborhood around primary node (or first node)
-        const primaryCenterNode =
-          initialNodes.find((n) => n.path && (n.path.includes('index') || n.path.includes('main') || n.path.includes('App'))) ||
-          initialNodes[0]
-
-        let flowElements = null
-        try {
-          const neighborhood = await fetchNeighborhood(
-            repositoryId,
-            primaryCenterNode.id,
-            token,
-            orgId,
-            { maxDepth: 2, maxNodes: 80, commitSha: activeRevisionSha },
+        // Verify that manifest and graph snapshot belong to the same commit
+        if (manifest.commitSha && activeRevisionSha && manifest.commitSha !== activeRevisionSha) {
+          setGraphSummary(null)
+          setManifestRepository(null)
+          setBackendNodes([])
+          setBackendEdges([])
+          setGraphState('error')
+          setGraphErrorMessage(
+            `Commit mismatch: graph snapshot (${activeRevisionSha.slice(0, 7)}) does not match manifest (${manifest.commitSha.slice(0, 7)}).`,
           )
-          if (requestIdRef.current !== currentReq) return
+          return
+        }
 
-          if (neighborhood && Array.isArray(neighborhood.nodes) && neighborhood.nodes.length > 0) {
-            flowElements = transformGraphToFlowElements(neighborhood)
+        // 3. Fetch ALL file nodes, symbol nodes, and dependency edges across pages
+        // (Excluding structural contains/defines edges prevents pagination truncation of real imports/calls)
+        const fetchAllPaginated = async (fetcher, maxPages = 5) => {
+          const collected = []
+          const first = await fetcher(1)
+          const firstItems = (first && (first.nodes || first.edges)) || []
+          collected.push(...firstItems)
+          const totalPages = Math.min(maxPages, Number(first?.totalPages) || 1)
+          if (totalPages > 1) {
+            const restPromises = []
+            for (let p = 2; p <= totalPages; p++) {
+              restPromises.push(fetcher(p).catch(() => null))
+            }
+            const restPages = await Promise.all(restPromises)
+            for (const pageRes of restPages) {
+              const items = (pageRes && (pageRes.nodes || pageRes.edges)) || []
+              collected.push(...items)
+            }
           }
-        } catch {
-          // If neighborhood query fails or center node has no edges, fallback to initialNodes
+          return { items: collected, truncated: (Number(first?.totalPages) || 1) > maxPages }
         }
 
-        if (!flowElements || flowElements.nodes.length === 0) {
-          flowElements = transformGraphToFlowElements({ nodes: initialNodes, edges: [] })
+        const [fileNodesRes, symbolNodesRes, edgesRes] = await Promise.all([
+          fetchAllPaginated(
+            (page) =>
+              fetchGraphNodes(repositoryId, token, orgId, {
+                type: 'file',
+                page,
+                pageSize: 500,
+                commitSha: activeRevisionSha,
+              }),
+            5,
+          ),
+          fetchAllPaginated(
+            (page) =>
+              fetchGraphNodes(repositoryId, token, orgId, {
+                type: 'symbol',
+                page,
+                pageSize: 500,
+                commitSha: activeRevisionSha,
+              }),
+            5,
+          ).catch(() => ({ items: [], truncated: false })),
+          fetchAllPaginated(
+            (page) =>
+              fetchGraphEdges(repositoryId, token, orgId, {
+                excludeTypes: ['contains', 'defines', 'member_of'],
+                page,
+                pageSize: 1000,
+                commitSha: activeRevisionSha,
+              }),
+            5,
+          ).catch(() => ({ items: [], truncated: false })),
+        ])
+
+        if (requestIdRef.current !== currentReq) return
+
+        const initialNodes = [...fileNodesRes.items, ...symbolNodesRes.items]
+        const fetchedEdges = edgesRes.items
+
+        // 4. Transform graph elements, using full repository edges whenever available
+        let flowElements = null
+        if (initialNodes.length > 0 && fetchedEdges.length > 0) {
+          flowElements = transformGraphToFlowElements({
+            nodes: initialNodes,
+            edges: fetchedEdges,
+            truncated: fileNodesRes.truncated || edgesRes.truncated,
+          })
+        } else if (initialNodes.length > 0) {
+          const primaryCenterNode =
+            initialNodes.find((n) => n.path && (n.path.includes('index') || n.path.includes('main') || n.path.includes('App'))) ||
+            initialNodes[0]
+
+          try {
+            const neighborhood = await fetchNeighborhood(
+              repositoryId,
+              primaryCenterNode.id,
+              token,
+              orgId,
+              { maxDepth: 2, maxNodes: 80, commitSha: activeRevisionSha },
+            )
+            if (requestIdRef.current !== currentReq) return
+
+            if (neighborhood && Array.isArray(neighborhood.nodes) && neighborhood.nodes.length > 0) {
+              flowElements = transformGraphToFlowElements(neighborhood)
+            }
+          } catch {
+            // If neighborhood query fails, fallback to initialNodes
+          }
+
+          if (!flowElements || flowElements.nodes.length === 0) {
+            flowElements = transformGraphToFlowElements({ nodes: initialNodes, edges: [] })
+          }
         }
 
-        setBackendNodes(flowElements.nodes)
-        setBackendEdges(flowElements.edges)
-        setIsTruncated(flowElements.truncated)
+        // 5. Merge complete repository manifest with graph elements
+        const mergedRepo = mergeManifestWithGraph({
+          manifest,
+          graphSummary: summary,
+          graphNodes: flowElements ? flowElements.nodes : [],
+          graphEdges: flowElements ? flowElements.edges : [],
+        })
+
+        setManifestRepository(mergedRepo)
+        setBackendNodes(flowElements ? flowElements.nodes : [])
+        setBackendEdges(flowElements ? flowElements.edges : [])
+        setIsTruncated(flowElements ? flowElements.truncated : false)
+        setExpandedFolders(new Set())
         setGraphState('available')
       } catch (err) {
         if (requestIdRef.current !== currentReq) return
+        setManifestRepository(null)
         setGraphState('error')
         setGraphErrorMessage(err.message || 'Failed to load repository graph.')
       }
     },
-    [getToken, orgId],
+    [getToken, orgId, repoUrl],
   )
 
   // Trigger server-side graph build
@@ -190,8 +305,12 @@ function AppContent() {
 
     try {
       const token = await getToken()
-      await requestBuildGraph(activeRepoId, token, orgId, { ref: 'HEAD' })
-      setNotice('Graph built successfully.')
+      const buildRes = await requestBuildGraph(activeRepoId, token, orgId, { ref: 'HEAD' })
+      if (buildRes?.data?.statistics?.isPartial) {
+        setNotice('Graph built (partial ingestion budget reached; additional files can be retrieved via batch ingestion).')
+      } else {
+        setNotice('Graph built successfully.')
+      }
       await loadRepositoryGraph(activeRepoId)
     } catch (err) {
       setNotice(err.message || 'Failed to build dependency graph.')
@@ -210,13 +329,31 @@ function AppContent() {
         // mock mode
         const file = fileMap.get(nodeId)
         if (file) {
-          setExpandedFolder(file.folder)
+          setExpandedFolders((prev) => {
+            const next = new Set(prev instanceof Set ? prev : [prev].filter(Boolean))
+            for (const dirId of file.ancestors || [file.folder]) {
+              next.add(dirId)
+            }
+            return next
+          })
           setSelectedFileId(nodeId)
         }
         return
       }
 
-      // Fetch node incoming & outgoing edges
+      // Check whether this file is an unparsed manifest file
+      const manifestFile = manifestRepository?.files?.find(
+        (f) => f.id === nodeId || f.path === nodeId,
+      )
+
+      if (manifestFile && !manifestFile.isParsed) {
+        setIncomingEdges([])
+        setOutgoingEdges([])
+        setIsLoadingNodeDetails(false)
+        return
+      }
+
+      // Fetch node incoming & outgoing edges for parsed files
       setIsLoadingNodeDetails(true)
       try {
         const token = await getToken()
@@ -234,16 +371,46 @@ function AppContent() {
         setIsLoadingNodeDetails(false)
       }
     },
-    [activeRepoId, fileMap, getToken, orgId, commitSha],
+    [activeRepoId, fileMap, getToken, orgId, commitSha, manifestRepository],
   )
 
   // Edge selection handler (provenance)
   const handleSelectEdge = useCallback(
-    async (edgeId) => {
+    async (edgeId, edgeData = null) => {
       setSelectedEdgeId(edgeId)
       setSelectedNodeId(null) // deselect node
+      setSelectedFileId(null)
       setIsLoadingEvidence(true)
       setEvidenceError(null)
+
+      if (!edgeId) {
+        setEdgeEvidenceData(null)
+        setIsLoadingEvidence(false)
+        return
+      }
+
+      // Safeguard 8: Aggregated edge selection must use client-side underlying edge records.
+      // Never send an aggregate folder edge ID to the canonical backend edge-evidence endpoint.
+      if (
+        edgeData?.isAggregated ||
+        (edgeData?.underlyingEdges && edgeData.underlyingEdges.length > 0) ||
+        edgeId.startsWith('edge:folder:')
+      ) {
+        setEdgeEvidenceData({
+          isAggregated: true,
+          edgeId,
+          source: edgeData?.source || (edgeId.replace(/^edge:/, '').split('\u0000')[0] || ''),
+          target: edgeData?.target || (edgeId.replace(/^edge:/, '').split('\u0000')[1] || ''),
+          count: edgeData?.count || edgeData?.underlyingEdges?.length || 1,
+          baseLabel: edgeData?.baseLabel || 'dependencies',
+          type: edgeData?.baseLabel || 'aggregated',
+          underlyingEdges: edgeData?.underlyingEdges || [],
+          isCrossDirectory: edgeData?.isCrossDirectory,
+          isCrossSubsystem: edgeData?.isCrossSubsystem,
+        })
+        setIsLoadingEvidence(false)
+        return
+      }
 
       if (!activeRepoId) {
         setIsLoadingEvidence(false)
@@ -268,6 +435,32 @@ function AppContent() {
       }
     },
     [activeRepoId, getToken, orgId, commitSha],
+  )
+
+  const handleToggleCrossDirectory = useCallback(() => {
+    setCrossDirectoryOnly((prev) => !prev)
+  }, [])
+
+  const handleToggleViewMode = useCallback(
+    (mode) => {
+      setViewMode((prevMode) => {
+        if (prevMode === mode) return prevMode
+        if (mode === 'architecture') {
+          // Safeguard 5: Save detailed expansion state before switching to architecture overview
+          detailedExpandedFoldersRef.current = new Set(expandedFolders)
+          setExpandedFolders(new Set())
+        } else {
+          // Restore user's previous detailed expansion state
+          const restored =
+            detailedExpandedFoldersRef.current && detailedExpandedFoldersRef.current.size > 0
+              ? detailedExpandedFoldersRef.current
+              : new Set(['components'])
+          setExpandedFolders(new Set(restored))
+        }
+        return mode
+      })
+    },
+    [expandedFolders],
   )
 
   // Expand neighborhood around center node
@@ -313,26 +506,85 @@ function AppContent() {
     [activeRepoId, getToken, orgId, commitSha],
   )
 
+  const activeHierarchy = useMemo(
+    () => deriveDirectoryHierarchy(manifestRepository || sampleRepository),
+    [manifestRepository],
+  )
+
   const handleToggleFolder = useCallback(
     (folderId) => {
-      const next = expandedFolder === folderId ? null : folderId
-      if (selectedFile) {
-        const shouldClear =
-          next === null
-            ? selectedFile.folder === expandedFolder
-            : selectedFile.folder !== next
-        if (shouldClear) setSelectedFileId(null)
-      }
-      setExpandedFolder(next)
+      setExpandedFolders((prev) => {
+        const next = new Set(prev instanceof Set ? prev : [prev].filter(Boolean))
+        if (next.has(folderId)) {
+          next.delete(folderId)
+        } else {
+          next.add(folderId)
+        }
+        return next
+      })
     },
-    [expandedFolder, selectedFile],
+    [],
   )
+
+  const handleExpandNextLevel = useCallback(() => {
+    setExpandedFolders((prev) => {
+      const current = new Set(prev instanceof Set ? prev : [prev].filter(Boolean))
+      const next = new Set(current)
+
+      for (const dirNode of activeHierarchy.folderMap.values()) {
+        if (current.has(dirNode.id)) continue
+        // Expand if top-level or if its direct parent is already expanded
+        if (dirNode.parentId === null || current.has(dirNode.parentId)) {
+          next.add(dirNode.id)
+        }
+      }
+      return next
+    })
+  }, [activeHierarchy])
+
+  const handleExpandAll = useCallback(() => {
+    setExpandedFolders(new Set(activeHierarchy.folderMap.keys()))
+  }, [activeHierarchy])
+
+  const handleCollapseAll = useCallback(() => {
+    setExpandedFolders(new Set())
+  }, [])
 
   const handleClearSelection = useCallback(() => {
     setSelectedFileId(null)
     setSelectedNodeId(null)
     setSelectedEdgeId(null)
   }, [])
+
+  const handleNavigateToItem = useCallback(
+    (item) => {
+      if (!item) return
+      if (item.type === 'folder') {
+        setExpandedFolders((prev) => {
+          const next = new Set(prev instanceof Set ? prev : [prev].filter(Boolean))
+          for (const anc of item.ancestors || []) {
+            next.add(anc)
+          }
+          next.add(item.id)
+          return next
+        })
+        setSelectedNodeId(`folder:${item.id}`)
+        setSelectedFileId(null)
+      } else {
+        // file or symbol
+        setExpandedFolders((prev) => {
+          const next = new Set(prev instanceof Set ? prev : [prev].filter(Boolean))
+          for (const anc of item.ancestors || []) {
+            next.add(anc)
+          }
+          return next
+        })
+        const targetId = item.fileId || item.id
+        handleSelectNode(targetId)
+      }
+    },
+    [handleSelectNode],
+  )
 
   // Verify and load repository
   const handleSubmit = async (event) => {
@@ -381,6 +633,15 @@ function AppContent() {
     return backendNodes.find((n) => n.id === selectedNodeId) || null
   }, [selectedNodeId, backendNodes])
 
+  const activeManifestFile = useMemo(() => {
+    if (!selectedNodeId || !manifestRepository?.files) return null
+    return (
+      manifestRepository.files.find(
+        (f) => f.id === selectedNodeId || f.path === selectedNodeId,
+      ) || null
+    )
+  }, [selectedNodeId, manifestRepository])
+
   return (
     <div className="app-shell">
       <TopBar
@@ -414,7 +675,22 @@ function AppContent() {
       {isSignedIn ? (
         <>
           <main className="app-main" style={{ position: 'relative' }}>
-            <LeftRail repository={sampleRepository} folderCount={folders.length} />
+            <LeftRail
+              repository={
+                manifestRepository
+                  ? {
+                      name: manifestRepository.repository || activeRepoId || 'Repository',
+                      branch: commitSha ? commitSha.slice(0, 7) : 'HEAD',
+                      files: manifestRepository.files,
+                      edges: manifestRepository.edges,
+                      isLive: true,
+                    }
+                  : sampleRepository
+              }
+              folderCount={activeHierarchy.folderMap.size}
+              onNavigateToItem={handleNavigateToItem}
+              onSelectFile={handleSelectNode}
+            />
 
             <section className="map-region" aria-label="Dependency map" style={{ position: 'relative' }}>
               {graphState === 'loading' && (
@@ -553,18 +829,30 @@ function AppContent() {
 
               <DependencyMap
                 repository={sampleRepository}
+                manifestRepository={manifestRepository}
                 backendNodes={backendNodes}
                 backendEdges={backendEdges}
                 isTruncated={isTruncated}
                 expandedFolder={expandedFolder}
+                expandedFolders={expandedFolders}
                 selectedFileId={selectedFileId}
                 selectedNodeId={selectedNodeId}
                 selectedEdgeId={selectedEdgeId}
+                viewMode={viewMode}
+                onToggleViewMode={handleToggleViewMode}
+                crossDirectoryOnly={crossDirectoryOnly}
+                onToggleCrossDirectory={handleToggleCrossDirectory}
+                relationshipFilter={relationshipFilter}
+                onSelectRelationshipFilter={setRelationshipFilter}
                 onToggleFolder={handleToggleFolder}
+                onExpandNextLevel={handleExpandNextLevel}
+                onExpandAll={handleExpandAll}
+                onCollapseAll={handleCollapseAll}
                 onSelectFile={handleSelectNode}
                 onSelectNode={handleSelectNode}
                 onSelectEdge={handleSelectEdge}
                 onClearSelection={handleClearSelection}
+                onNavigateToItem={handleNavigateToItem}
               />
             </section>
 
@@ -576,13 +864,16 @@ function AppContent() {
                 isLoading={isLoadingEvidence}
                 error={evidenceError}
                 onClose={() => setSelectedEdgeId(null)}
+                onNavigateToItem={handleNavigateToItem}
               />
             )}
 
             {/* Node details panel when a node is clicked */}
-            {(activeBackendNode || selectedFile) && !selectedEdgeId && (
+            {(activeBackendNode || activeManifestFile || selectedFile) && !selectedEdgeId && (
               <DetailPanel
+                repository={manifestRepository || sampleRepository}
                 backendNode={activeBackendNode}
+                manifestFile={activeManifestFile}
                 incomingEdges={incomingEdges}
                 outgoingEdges={outgoingEdges}
                 isLoadingDetails={isLoadingNodeDetails}
@@ -602,7 +893,15 @@ function AppContent() {
             graphSummary={graphSummary}
             expandedFolder={expandedFolder}
             selectedFile={selectedFile}
-            selectedNode={activeBackendNode}
+            selectedNode={
+              activeBackendNode ||
+              (activeManifestFile
+                ? { id: activeManifestFile.id, data: activeManifestFile }
+                : null)
+            }
+            crossDirectoryOnly={crossDirectoryOnly}
+            relationshipFilter={relationshipFilter}
+            viewMode={viewMode}
             onOpenUnresolved={() => setIsUnresolvedOpen(true)}
           />
 

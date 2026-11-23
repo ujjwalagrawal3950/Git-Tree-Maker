@@ -38,6 +38,7 @@ const EDGE_SEMANTICS = Object.freeze({
   CALLS: "calls",
   EXTENDS: "extends",
   IMPLEMENTS: "implements",
+  HTTP_REQUEST: "http_request",
 });
 
 const EDGE_SEMANTICS_DESCRIPTIONS = Object.freeze({
@@ -48,6 +49,7 @@ const EDGE_SEMANTICS_DESCRIPTIONS = Object.freeze({
   [EDGE_SEMANTICS.CALLS]: "Source function/method invokes target function/method (call site)",
   [EDGE_SEMANTICS.EXTENDS]: "Source class or interface inherits from target class or interface",
   [EDGE_SEMANTICS.IMPLEMENTS]: "Source class implements target interface",
+  [EDGE_SEMANTICS.HTTP_REQUEST]: "Client invokes backend HTTP endpoint (HTTP request)",
 });
 
 /**

@@ -186,6 +186,121 @@ async function fetchBlobWithRetry(owner, repo, blobSha, options = {}) {
 }
 
 /**
+ * Computes an architectural priority rank for a file.
+ * Rank 0: Manifests and build configurations.
+ * Rank 1: Entry points and server root files.
+ * Rank 2: Architectural core modules (routes, controllers, models, services, components, etc.).
+ * Rank 3: Other source and utility files.
+ *
+ * @param {string} filePath
+ * @param {string} [category]
+ * @returns {number}
+ */
+function computeFilePriority(filePath, category) {
+  const norm = (filePath || "").replace(/\\/g, "/");
+  const fileName = norm.split("/").pop().toLowerCase();
+
+  // Rank 0: Manifests & project build configs
+  if (
+    fileName === "package.json" ||
+    fileName.startsWith("tsconfig") ||
+    fileName === "pom.xml" ||
+    fileName === "build.gradle" ||
+    fileName === "cargo.toml" ||
+    fileName === "requirements.txt" ||
+    fileName === "pyproject.toml" ||
+    fileName === "vite.config.js" ||
+    fileName === "vite.config.ts" ||
+    fileName === "webpack.config.js" ||
+    category === "manifest"
+  ) {
+    return 0;
+  }
+
+  // Rank 1: Main entry points
+  if (
+    fileName.startsWith("main.") ||
+    fileName.startsWith("index.") ||
+    fileName.startsWith("app.") ||
+    fileName.startsWith("server.")
+  ) {
+    return 1;
+  }
+
+  // Rank 2: Architectural modules
+  const lower = norm.toLowerCase();
+  if (
+    lower.includes("route") ||
+    lower.includes("router") ||
+    lower.includes("controller") ||
+    lower.includes("api") ||
+    lower.includes("service") ||
+    lower.includes("component") ||
+    lower.includes("model") ||
+    lower.includes("store") ||
+    lower.includes("hook") ||
+    lower.includes("lib") ||
+    lower.includes("util")
+  ) {
+    return 2;
+  }
+
+  return 3;
+}
+
+/**
+ * Partitions eligible files by top-level subsystem and interleaves them round-robin
+ * in ascending architectural priority order. This prevents any single directory (e.g. Backend)
+ * from consuming the entire retrieval budget and starving other subsystems (e.g. Frontend).
+ *
+ * @param {Array<object>} eligible
+ * @returns {Array<object>}
+ */
+function prioritizeEligibleFiles(eligible) {
+  if (!eligible || eligible.length <= 1) return eligible;
+
+  const subsystemMap = new Map();
+  for (const file of eligible) {
+    const norm = (file.path || "").replace(/\\/g, "/");
+    const parts = norm.split("/").filter(Boolean);
+    const subsystem = parts.length > 1 ? parts[0].toLowerCase() : "_root_";
+
+    if (!subsystemMap.has(subsystem)) {
+      subsystemMap.set(subsystem, []);
+    }
+    subsystemMap.get(subsystem).push({
+      file,
+      priority: computeFilePriority(file.path, file.category),
+    });
+  }
+
+  for (const [, queue] of subsystemMap) {
+    queue.sort((a, b) => {
+      if (a.priority !== b.priority) {
+        return a.priority - b.priority;
+      }
+      return a.file.path.localeCompare(b.file.path);
+    });
+  }
+
+  const result = [];
+  let hasMore = true;
+  while (hasMore) {
+    hasMore = false;
+    for (const [, queue] of subsystemMap) {
+      if (queue.length > 0) {
+        result.push(queue.shift().file);
+        if (queue.length > 0) {
+          hasMore = true;
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
  * Selectively retrieves source and supporting files from a repository.
  *
  * @param {object} params
@@ -231,17 +346,18 @@ async function retrieveSourceFiles({
     maxFileSizeBytes: budgets.maxFileSizeBytes,
   });
 
+  const prioritizedEligible = prioritizeEligibleFiles(eligible);
   let isTruncated = false;
-  let filesToRetrieve = eligible;
+  let filesToRetrieve = prioritizedEligible;
 
   // 2. Enforce maximum retrieval file count budget
-  if (eligible.length > budgets.maxRetrievalFiles) {
+  if (prioritizedEligible.length > budgets.maxRetrievalFiles) {
     isTruncated = true;
-    filesToRetrieve = eligible.slice(0, budgets.maxRetrievalFiles);
-    for (let i = budgets.maxRetrievalFiles; i < eligible.length; i++) {
+    filesToRetrieve = prioritizedEligible.slice(0, budgets.maxRetrievalFiles);
+    for (let i = budgets.maxRetrievalFiles; i < prioritizedEligible.length; i++) {
       skipped.push({
-        path: eligible[i].path,
-        blobSha: eligible[i].blobSha,
+        path: prioritizedEligible[i].path,
+        blobSha: prioritizedEligible[i].blobSha,
         reason: "budget_exceeded",
       });
     }

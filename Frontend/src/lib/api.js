@@ -93,6 +93,46 @@ export async function verifyRepositoryUrl(url, token, orgId) {
   return payload && payload.data
 }
 
+export async function fetchRepositoryManifest(url, token, orgId, ref, signal) {
+  if (!token) {
+    throw new Error('Your session has expired. Please sign in again.')
+  }
+
+  let response
+  try {
+    const endpoint = orgId
+      ? `${API_BASE_URL}/api/organizations/${encodeURIComponent(orgId)}/repositories/manifest`
+      : `${API_BASE_URL}/api/repositories/manifest`
+
+    response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ url, ref }),
+      credentials: 'omit',
+      signal,
+    })
+  } catch (err) {
+    if (err.name === 'AbortError') throw err
+    const error = new Error('GitHub service temporarily unavailable.')
+    error.code = 'GITHUB_UNAVAILABLE'
+    throw error
+  }
+
+  const payload = await readResponse(response)
+
+  if (!response.ok) {
+    const error = new Error(payload?.error?.message || 'Failed to fetch repository manifest.')
+    error.status = response.status
+    error.code = payload?.error?.code
+    throw error
+  }
+
+  return payload && payload.data
+}
+
 export async function graphRequest(path, { token, orgId, query, method = 'GET', body, signal } = {}) {
   if (!token) {
     const error = new Error('Your session has expired. Please sign in again.')
@@ -201,6 +241,25 @@ export async function fetchGraphNodes(repositoryId, token, orgId, params = {}, s
       type: params.type,
       language: params.language,
       query: params.query,
+      page: params.page,
+      pageSize: params.pageSize,
+      commitSha: params.commitSha,
+    },
+    signal,
+  })
+}
+
+export async function fetchGraphEdges(repositoryId, token, orgId, params = {}, signal) {
+  return graphRequest(`/api/repositories/${encodeURIComponent(repositoryId)}/graph/edges`, {
+    token,
+    orgId,
+    query: {
+      edgeType: params.edgeType,
+      excludeTypes: Array.isArray(params.excludeTypes)
+        ? params.excludeTypes.join(',')
+        : params.excludeTypes,
+      source: params.source,
+      target: params.target,
       page: params.page,
       pageSize: params.pageSize,
       commitSha: params.commitSha,

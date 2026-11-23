@@ -208,3 +208,22 @@ test("graphQueryService: getFileSubgraph extracts file, symbols, and direct conn
   assert.ok(subgraph.edges.length > 0);
 });
 
+test("graphQueryService: getEdges supports excludeTypes to filter out structural edges", () => {
+  const snapshot = buildTestSnapshot();
+  const queryService = new GraphQueryService(snapshot);
+
+  const allEdges = queryService.getEdges({ pageSize: 100 });
+  const depEdges = queryService.getEdges({
+    excludeTypes: ["contains", "defines", "member_of"],
+    pageSize: 100,
+  });
+
+  assert.ok(allEdges.total > depEdges.total, "All edges must include structural containment edges");
+  assert.equal(depEdges.total, 3, "Must return exactly the 3 dependency edges (A->B, B->C, C->A)");
+  assert.ok(
+    depEdges.edges.every(
+      (e) => e.type !== "contains" && e.type !== "defines" && e.type !== "member_of",
+    ),
+  );
+});
+

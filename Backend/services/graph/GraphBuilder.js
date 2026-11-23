@@ -57,6 +57,7 @@ class GraphBuilder {
     commitSha,
     fileIRList = [],
     normalizedEvidenceList = [],
+    manifest = null,
   }, options = {}) {
     if (!repositoryId || typeof repositoryId !== "string") {
       throw new Error("GraphBuilder.build requires a valid repositoryId string");
@@ -86,6 +87,17 @@ class GraphBuilder {
       const fileInfo = fileIr && (fileIr.analysis ? fileIr.analysis.file : fileIr.file);
       if (fileInfo && fileInfo.path) {
         internalFilePathSet.add(fileInfo.path);
+      }
+    }
+
+    const manifestInput = manifest || options.manifest || options.manifestPaths;
+    if (manifestInput) {
+      const mFiles = Array.isArray(manifestInput.files) ? manifestInput.files : (Array.isArray(manifestInput) ? manifestInput : null);
+      if (Array.isArray(mFiles)) {
+        for (const f of mFiles) {
+          const p = typeof f === "string" ? f : (f && f.path);
+          if (p) internalFilePathSet.add(p);
+        }
       }
     }
 
@@ -167,6 +179,7 @@ class GraphBuilder {
               target: symNodeId,
               type: EDGE_SEMANTICS.CONTAINS,
               semanticQualifier: null,
+              confirmed: true,
               evidence: [
                 {
                   id: `ev_cont_${sym.id || sym.name}`,
@@ -192,6 +205,7 @@ class GraphBuilder {
               target: symNodeId,
               type: EDGE_SEMANTICS.DEFINES,
               semanticQualifier: null,
+              confirmed: true,
               evidence: [
                 {
                   id: `ev_def_${sym.id || sym.name}`,
@@ -222,6 +236,7 @@ class GraphBuilder {
               target: childNodeId,
               type: EDGE_SEMANTICS.MEMBER_OF,
               semanticQualifier: null,
+              confirmed: true,
               evidence: [
                 {
                   id: `ev_member_${sym.id}`,
@@ -248,6 +263,80 @@ class GraphBuilder {
       const isConfirmed = ev.status && ev.status.isConfirmed === true;
       const normalizedStatus = ev.status ? ev.status.normalized : NORMALIZED_STATUSES.UNRESOLVED;
 
+      // 2A-HTTP: HTTP Request Evidence
+      if (ev.category === "http_request") {
+        if (isConfirmed && ev.sourceFile && ev.target && ev.target.resolvedPath) {
+          const sourceFileNodeId = createFileNodeId(repositoryId, commitSha, ev.sourceFile);
+          const targetFileNodeId = createFileNodeId(repositoryId, commitSha, ev.target.resolvedPath);
+
+          // Verify both source and target exist in this revision / manifest
+          if (nodeMap.has(sourceFileNodeId) && internalFilePathSet.has(ev.target.resolvedPath)) {
+            // If target file node does not exist yet (e.g. valid file in manifest not in fileIRList), create it
+            if (!nodeMap.has(targetFileNodeId)) {
+              nodeMap.set(targetFileNodeId, {
+                id: targetFileNodeId,
+                type: "file",
+                name: path.posix.basename(ev.target.resolvedPath),
+                path: ev.target.resolvedPath,
+                language: "unknown",
+                metadata: { status: "reference_only" },
+              });
+            }
+
+            const method = ev.target.httpMethod || (ev.metadata && ev.metadata.httpMethod) || "GET";
+            const composedPath = ev.target.composedRoutePath || (ev.metadata && ev.metadata.composedRoutePath) || "/";
+            const classification = (ev.status && ev.status.classification) || "confirmed_exact";
+            const isPattern = classification === "pattern_compatible";
+            const semanticQualifier = `${method}:${composedPath}${isPattern ? ":pattern" : ""}`;
+
+            const edgeId = createEdgeId(
+              sourceFileNodeId,
+              EDGE_SEMANTICS.HTTP_REQUEST,
+              targetFileNodeId,
+              semanticQualifier
+            );
+
+            if (edgeMap.has(edgeId)) {
+              // Deduplicate edge: append supporting evidence
+              const existingEdge = edgeMap.get(edgeId);
+              existingEdge.evidence.push(ev);
+            } else {
+              edgeMap.set(edgeId, {
+                id: edgeId,
+                source: sourceFileNodeId,
+                target: targetFileNodeId,
+                type: EDGE_SEMANTICS.HTTP_REQUEST,
+                semanticQualifier,
+                confirmed: true,
+                metadata: {
+                  httpMethod: method,
+                  composedRoutePath: composedPath,
+                  classification,
+                  isPatternCompatible: isPattern,
+                  mountChain: ev.target.mountChain || (ev.metadata && ev.metadata.mountChain) || [],
+                },
+                evidence: [ev],
+              });
+            }
+            continue;
+          }
+        }
+
+        // Unconfirmed or target file not in revision/manifest: route to unresolvedReferences
+        unresolvedList.push({
+          id: ev.id || `unres_http_${unresolvedList.length}`,
+          category: "http_request",
+          sourceFile: ev.sourceFile || "unknown",
+          rawSpecifier: ev.target ? (ev.target.rawSpecifier || ev.target.clientPattern) : null,
+          status: (ev.status && ev.status.classification) || normalizedStatus,
+          candidates: ev.target && Array.isArray(ev.target.candidates) ? [...ev.target.candidates] : null,
+          rule: ev.resolver ? ev.resolver.rule : null,
+          location: ev.sourceLocation || null,
+          resolver: ev.resolver || null,
+        });
+        continue;
+      }
+
       // 2A: Confirmed Internal Dependency Edge
       if (isConfirmed && ev.sourceFile && ev.target && ev.target.resolvedPath) {
         // Enforce repository revision containment
@@ -273,16 +362,33 @@ class GraphBuilder {
           const edgeType = isInclude ? "includes" : EDGE_SEMANTICS.IMPORTS;
           const edgeId = createEdgeId(sourceFileNodeId, edgeType, targetFileNodeId);
 
+          const isConditional = Boolean(
+            ev.isConditional ||
+            (ev.evidence && ev.evidence.isConditional) ||
+            (ev.languageMetadata && ev.languageMetadata.isConditional)
+          );
+          const conditionText =
+            (ev.languageMetadata && ev.languageMetadata.condition) ||
+            (ev.evidence && ev.evidence.condition) ||
+            null;
+
           if (edgeMap.has(edgeId)) {
             // Deduplicate edge: append supporting evidence
-            edgeMap.get(edgeId).evidence.push(ev);
+            const existingEdge = edgeMap.get(edgeId);
+            existingEdge.evidence.push(ev);
+            // If any evidence is NOT conditional, the relationship is unconditional
+            if (!isConditional) {
+              existingEdge.semanticQualifier = null;
+            }
           } else {
             edgeMap.set(edgeId, {
               id: edgeId,
               source: sourceFileNodeId,
               target: targetFileNodeId,
               type: edgeType,
-              semanticQualifier: null,
+              semanticQualifier: isConditional ? "conditional" : null,
+              confirmed: true,
+              metadata: conditionText ? { condition: conditionText } : {},
               evidence: [ev],
             });
           }
@@ -328,6 +434,7 @@ class GraphBuilder {
               target: externalNodeId,
               type: EDGE_SEMANTICS.IMPORTS,
               semanticQualifier: null,
+              confirmed: true,
               evidence: [ev],
             });
           }
@@ -411,6 +518,8 @@ class GraphBuilder {
       unresolvedCount,
       ambiguousCount,
       totalDiagnostics: diagnostics.length,
+      isPartial: Boolean(options.isPartial),
+      completeness: options.isPartial ? "partial" : "complete",
     };
 
     return {

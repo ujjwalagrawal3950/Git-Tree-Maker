@@ -1,5 +1,10 @@
 const BaseAdapter = require("../BaseAdapter");
-const { parseJsTsFile } = require("./JavaScriptAdapter");
+const {
+  parseJsTsFile,
+  extractHttpRequests,
+  extractExpressFacts,
+  getExpressRouteFacts,
+} = require("./JavaScriptAdapter");
 
 /**
  * TypeScript Language Parser Adapter.
@@ -23,6 +28,18 @@ class TypeScriptAdapter extends BaseAdapter {
 
   async parseFile(file, options = {}) {
     return parseJsTsFile(this, file, options);
+  }
+
+  extractHttpRequests(sourceFile, fileId, symbols = []) {
+    return extractHttpRequests(sourceFile, fileId, symbols);
+  }
+
+  extractExpressFacts(sourceFile, fileId, options = {}) {
+    return extractExpressFacts(sourceFile, fileId, options);
+  }
+
+  getExpressRouteFacts(fileIdOrIr) {
+    return getExpressRouteFacts(fileIdOrIr);
   }
 }
 

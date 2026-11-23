@@ -4,16 +4,34 @@ export default function StatusBar({
   expandedFolder,
   selectedFile,
   selectedNode,
+  crossDirectoryOnly = false,
+  relationshipFilter = 'all',
+  viewMode = 'detailed',
   onOpenUnresolved,
 }) {
   const isBackend = Boolean(graphSummary)
+  const repoLabel =
+    graphSummary?.repository?.repositoryId ||
+    graphSummary?.repositoryId ||
+    repository.name
+  const revisionSha =
+    graphSummary?.revision?.commitSha || graphSummary?.commitSha || null
+  const fileCount =
+    graphSummary?.statistics?.fileNodes ?? graphSummary?.counts?.files ?? 0
+  const symbolCount =
+    graphSummary?.statistics?.symbolNodes ?? graphSummary?.counts?.symbols ?? 0
+  const edgeCount =
+    graphSummary?.statistics?.totalEdges ?? graphSummary?.counts?.edges ?? 0
+  const unresolvedCount =
+    graphSummary?.statistics?.unresolvedReferences ??
+    graphSummary?.counts?.unresolvedReferences
 
   return (
     <footer className="status-bar" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
       <div className="status-bar__group" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
         <span className="status-dot" />
         <span className="status-mono">
-          {isBackend ? graphSummary.repositoryId : repository.name}
+          {isBackend ? repoLabel : repository.name}
         </span>
         {isBackend ? (
           <>
@@ -21,15 +39,15 @@ export default function StatusBar({
               className="status-sample"
               style={{ background: 'var(--brand-muted, rgba(56, 189, 248, 0.2))', color: 'var(--brand, #38bdf8)' }}
             >
-              {graphSummary.commitSha ? graphSummary.commitSha.slice(0, 7) : 'Live Graph'}
+              {revisionSha ? revisionSha.slice(0, 7) : 'Live Graph'}
             </span>
             <span className="status-separator">/</span>
-            <span>{graphSummary.counts?.files ?? 0} files</span>
+            <span>{fileCount} files</span>
             <span className="status-separator">/</span>
-            <span>{graphSummary.counts?.symbols ?? 0} symbols</span>
+            <span>{symbolCount} symbols</span>
             <span className="status-separator">/</span>
-            <span>{graphSummary.counts?.edges ?? 0} edges</span>
-            {graphSummary.counts?.unresolvedReferences !== undefined && (
+            <span>{edgeCount} edges</span>
+            {unresolvedCount !== undefined && (
               <>
                 <span className="status-separator">/</span>
                 <button
@@ -46,7 +64,7 @@ export default function StatusBar({
                     fontFamily: 'inherit',
                   }}
                 >
-                  {graphSummary.counts.unresolvedReferences} unresolved
+                  {unresolvedCount} unresolved
                 </button>
               </>
             )}
@@ -63,6 +81,42 @@ export default function StatusBar({
       </div>
 
       <div className="status-bar__spacer" style={{ flex: 1 }} />
+
+      {viewMode === 'architecture' && (
+        <span
+          className="status-mono status-context"
+          style={{ color: '#38bdf8', background: 'rgba(56, 189, 248, 0.12)', padding: '2px 6px', borderRadius: '4px' }}
+        >
+          🏛 Architecture Overview
+        </span>
+      )}
+
+      {crossDirectoryOnly && (
+        <span
+          className="status-mono status-context"
+          style={{ color: '#0284c7', background: 'rgba(2, 132, 199, 0.12)', padding: '2px 6px', borderRadius: '4px' }}
+        >
+          ⚡ Cross-Directory Only
+        </span>
+      )}
+
+      {relationshipFilter === 'http' && (
+        <span
+          className="status-mono status-context"
+          style={{ color: '#06b6d4', background: 'rgba(6, 182, 212, 0.12)', padding: '2px 6px', borderRadius: '4px' }}
+        >
+          🌐 HTTP APIs Only
+        </span>
+      )}
+
+      {relationshipFilter === 'code' && (
+        <span
+          className="status-mono status-context"
+          style={{ color: '#38bdf8', background: 'rgba(56, 189, 248, 0.12)', padding: '2px 6px', borderRadius: '4px' }}
+        >
+          📦 Code Dependencies Only
+        </span>
+      )}
 
       {expandedFolder && (
         <span className="status-mono status-context">

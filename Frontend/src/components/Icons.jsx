@@ -147,3 +147,12 @@ export function ArrowUpRightIcon() {
     </svg>
   )
 }
+
+export function SearchIcon() {
+  return (
+    <svg {...base}>
+      <circle cx="7" cy="7" r="4.5" />
+      <path d="m10.5 10.5 3.5 3.5" />
+    </svg>
+  )
+}

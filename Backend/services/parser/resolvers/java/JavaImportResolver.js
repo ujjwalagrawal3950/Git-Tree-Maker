@@ -1,5 +1,5 @@
 const { classifyJavaPackage, checkJdkPackage } = require("./jdkPackages");
-const { JavaRepositoryIndex, normalizePath } = require("./candidateResolver");
+const { JavaRepositoryIndex, normalizePath, inferFromPath } = require("./candidateResolver");
 const { readBuildMetadata } = require("./buildMetadataReader");
 
 const RESOLVER_VERSION = "1.0.0";
@@ -136,6 +136,47 @@ class JavaImportResolver {
       // Check if internal repository package
       const internalWildcard = this.index.resolveWildcardPackage(targetPackage);
       if (internalWildcard.status === "wildcard") {
+        if (Array.isArray(meta.typeReferences) && meta.typeReferences.length > 0) {
+          const refNames = new Set();
+          for (const ref of meta.typeReferences) {
+            const text = typeof ref === "string" ? ref : (ref && ref.text ? ref.text : "");
+            if (text) {
+              const words = text.match(/[A-Z][a-zA-Z0-9_$]*/g);
+              if (words) {
+                for (const w of words) refNames.add(w);
+              } else {
+                refNames.add(text.trim());
+              }
+            }
+          }
+
+          if (refNames.size > 0 && Array.isArray(internalWildcard.candidates)) {
+            const matchedCandidates = internalWildcard.candidates.filter((cand) => {
+              const inferred = inferFromPath(cand);
+              return refNames.has(inferred.typeName);
+            });
+
+            if (matchedCandidates.length === 1) {
+              return {
+                status: "internal_resolved",
+                resolvedPath: matchedCandidates[0],
+                candidates: matchedCandidates,
+                rule: "internal_package_wildcard_type_match",
+                packageName: targetPackage,
+              };
+            }
+            if (matchedCandidates.length > 1) {
+              return {
+                status: "wildcard",
+                resolvedPath: null,
+                candidates: matchedCandidates,
+                rule: "internal_package_wildcard_multiple_match",
+                packageName: targetPackage,
+              };
+            }
+          }
+        }
+
         return {
           status: "wildcard",
           resolvedPath: null,

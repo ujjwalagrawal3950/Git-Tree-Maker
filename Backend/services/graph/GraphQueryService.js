@@ -153,6 +153,61 @@ class GraphQueryService {
   }
 
   /**
+   * Retrieves paginated edges with optional filtering by type, excluded types, source, or target.
+   *
+   * @param {object} [options]
+   * @param {string} [options.edgeType]
+   * @param {string|string[]} [options.excludeTypes]
+   * @param {string} [options.source]
+   * @param {string} [options.target]
+   * @param {number} [options.page=1]
+   * @param {number} [options.pageSize=200]
+   * @returns {{ edges: Array<object>, total: number, page: number, pageSize: number, totalPages: number }}
+   */
+  getEdges(options = {}) {
+    const page = Math.max(1, parseInt(options.page, 10) || 1);
+    const pageSize = Math.min(2000, Math.max(1, parseInt(options.pageSize, 10) || 200));
+
+    let candidateEdges = this.edges;
+
+    if (options.edgeType) {
+      candidateEdges = candidateEdges.filter((e) => e.type === options.edgeType);
+    }
+    if (options.excludeTypes) {
+      const excluded = new Set(
+        (Array.isArray(options.excludeTypes)
+          ? options.excludeTypes
+          : String(options.excludeTypes).split(",")
+        )
+          .map((t) => String(t).trim())
+          .filter(Boolean)
+      );
+      if (excluded.size > 0) {
+        candidateEdges = candidateEdges.filter((e) => !excluded.has(e.type));
+      }
+    }
+    if (options.source) {
+      candidateEdges = candidateEdges.filter((e) => e.source === options.source);
+    }
+    if (options.target) {
+      candidateEdges = candidateEdges.filter((e) => e.target === options.target);
+    }
+
+    const total = candidateEdges.length;
+    const totalPages = Math.ceil(total / pageSize) || 1;
+    const offset = (page - 1) * pageSize;
+    const paginated = candidateEdges.slice(offset, offset + pageSize);
+
+    return {
+      edges: paginated,
+      total,
+      page,
+      pageSize,
+      totalPages,
+    };
+  }
+
+  /**
    * Retrieves outgoing edges from a node with optional edge type filter.
    *
    * @param {string} nodeId

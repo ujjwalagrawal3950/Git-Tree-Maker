@@ -1,4 +1,6 @@
+import { useMemo } from 'react'
 import { getKindMeta } from '../lib/kinds'
+import { calculateImpactRadius } from '../lib/architecturalIntelligence'
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
@@ -43,8 +45,10 @@ function DependencyList({ items, direction, onSelectNode }) {
 }
 
 export default function DetailPanel({
+  repository,
   // Backend canonical node props
   backendNode,
+  manifestFile,
   incomingEdges = [],
   outgoingEdges = [],
   isLoadingDetails,
@@ -59,20 +63,37 @@ export default function DetailPanel({
   onSelectFile,
   onClose,
 }) {
-  const isBackend = Boolean(backendNode)
+  const isBackend = Boolean(backendNode || manifestFile)
   const selectHandler = onSelectNode || onSelectFile
+
+  const canonicalId = isBackend
+    ? backendNode?.id || manifestFile?.id || (manifestFile?.path || backendNode?.data?.path)
+    : file?.id
+
+  const impactAnalysis = useMemo(() => {
+    if (!repository || !canonicalId) return null
+    return calculateImpactRadius(canonicalId, repository, null, {
+      maxDepth: 5,
+      maxNodes: 100,
+    })
+  }, [repository, canonicalId])
 
   if (!isBackend && !file) return null
 
-  // If using backend node
+  // If using backend or manifest file node
   if (isBackend) {
-    const data = backendNode.data || backendNode
-    const nodeType = backendNode.type || data.rawType || 'file'
-    const name = data.label || data.name || data.path || backendNode.id
+    const rawData = backendNode?.data || backendNode || {}
+    const data = manifestFile ? { ...rawData, ...manifestFile } : rawData
+    const nodeType = backendNode?.type || data.rawType || 'file'
+    const name = manifestFile?.name || data.label || data.name || data.path || backendNode?.id || 'File'
     const qualifiedName = data.qualifiedName
-    const path = data.path
-    const kind = data.kind || data.language || nodeType
+    const path = manifestFile?.path || data.path
+    const kind = manifestFile?.kind || data.kind || data.language || nodeType
     const meta = getKindMeta(kind)
+    const isParsed = manifestFile ? Boolean(manifestFile.isParsed) : true
+    const symbols = manifestFile?.symbols || data.symbols || []
+    const sizeBytes = manifestFile?.sizeBytes || data.sizeBytes || 0
+    const canonicalId = backendNode?.id || manifestFile?.id || path
 
     const outgoingTargets = outgoingEdges.map((e) => ({
       id: e.target,
@@ -94,6 +115,13 @@ export default function DetailPanel({
               <span className="kind-dot" />
               {meta.label}
             </span>
+            {manifestFile && (
+              <span
+                className={`detail-status-pill ${isParsed ? 'status-parsed' : 'status-unparsed'}`}
+              >
+                {isParsed ? 'Parsed' : 'Unparsed'}
+              </span>
+            )}
             <button
               type="button"
               className="icon-button detail-close"
@@ -113,18 +141,89 @@ export default function DetailPanel({
           )}
         </div>
 
-        <div className="detail-stats">
-          <div className="stat-box">
-            <div className="stat-box__value">{outgoingTargets.length}</div>
-            <div className="stat-box__label">Fan-out</div>
+        {!isParsed && (
+          <div className="detail-unparsed-banner">
+            <p className="detail-unparsed-text">
+              {kind === 'doc'
+                ? 'Documentation file — preserved in repository hierarchy without code AST analysis.'
+                : kind === 'config'
+                ? 'Configuration manifest — preserved in repository hierarchy without code AST analysis.'
+                : 'Repository file — not analyzed for code declarations or dependencies.'}
+            </p>
           </div>
-          <div className="stat-box">
-            <div className="stat-box__value">{incomingSources.length}</div>
-            <div className="stat-box__label">Fan-in</div>
-          </div>
-        </div>
+        )}
 
-        {onExpandNeighborhood && (
+        {isParsed && (
+          <div className="detail-stats">
+            <div className="stat-box">
+              <div className="stat-box__value">{outgoingTargets.length}</div>
+              <div className="stat-box__label">Fan-out</div>
+            </div>
+            <div className="stat-box">
+              <div className="stat-box__value">{incomingSources.length}</div>
+              <div className="stat-box__label">Fan-in</div>
+            </div>
+          </div>
+        )}
+
+        {/* Blast Radius / Impact Analysis Card */}
+        {impactAnalysis && impactAnalysis.totalAffectedCount > 0 && (
+          <div className="detail-impact-card">
+            <div className="detail-impact-header">
+              <span className="detail-impact-title">Blast Radius</span>
+              <span className="detail-impact-badge">
+                {impactAnalysis.isLowerBound ? `≥ ${impactAnalysis.blastRadiusPercentage}% (lower bound)` : `${impactAnalysis.blastRadiusPercentage}% of repo`}
+              </span>
+            </div>
+            <div className="detail-impact-bar-track">
+              <div
+                className="detail-impact-bar-fill"
+                style={{
+                  width: `${Math.max(6, Math.min(100, impactAnalysis.blastRadiusPercentage))}%`,
+                }}
+              />
+            </div>
+            <div className="detail-impact-desc">
+              Modifying this file {impactAnalysis.isLowerBound ? 'impacts at least' : 'directly impacts'} <strong>{impactAnalysis.totalAffectedCount}</strong> downstream {impactAnalysis.totalAffectedCount === 1 ? 'file' : 'files'} ({impactAnalysis.analyzedCodePercentage}% of analyzed code, {impactAnalysis.blastRadiusPercentage}% of all files) across <strong>{impactAnalysis.maxDepthReached}</strong> caller {impactAnalysis.maxDepthReached === 1 ? 'level' : 'levels'}.
+            </div>
+            {impactAnalysis.truncated && (
+              <div className="detail-impact-sub" style={{ color: '#f59e0b', fontWeight: 600 }}>
+                ⚠ Incomplete result: bounded by {impactAnalysis.truncationReason === 'max_depth_exceeded' ? `depth limit (${impactAnalysis.maxDepthReached} levels)` : 'node limit'}. True blast radius may be larger.
+              </div>
+            )}
+            {impactAnalysis.cyclesDetected && (
+              <div className="detail-impact-sub">
+                Cyclic dependencies detected in downstream chain.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Declared Symbols Section */}
+        {symbols.length > 0 && (
+          <section className="detail-section">
+            <div className="detail-section__head">
+              <span className="detail-section__title">Declared Symbols</span>
+              <span className="detail-section__count">{symbols.length}</span>
+            </div>
+            <div className="detail-symbol-list">
+              {symbols.map((sym) => {
+                const symMeta = getKindMeta(sym.kind || 'symbol')
+                return (
+                  <div key={sym.id} className="detail-symbol-item" title={sym.id}>
+                    <span className="detail-symbol-badge" style={{ '--kind': symMeta.color }}>
+                      <span className="kind-dot" />
+                      {symMeta.label}
+                    </span>
+                    <span className="detail-symbol-name">{sym.name}</span>
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        )}
+
+        {isParsed && onExpandNeighborhood && backendNode && (
           <div style={{ padding: '0 16px 12px 16px' }}>
             <button
               type="button"
@@ -152,39 +251,48 @@ export default function DetailPanel({
           </div>
         )}
 
-        <section className="detail-section">
-          <div className="detail-section__head">
-            <span className="detail-section__title">Outgoing Dependencies</span>
-            <span className="detail-section__count">
-              {outgoingTargets.length}
-            </span>
-          </div>
-          <DependencyList
-            items={outgoingTargets}
-            direction="outgoing"
-            onSelectNode={selectHandler}
-          />
-        </section>
+        {isParsed && (
+          <>
+            <section className="detail-section">
+              <div className="detail-section__head">
+                <span className="detail-section__title">Outgoing Dependencies</span>
+                <span className="detail-section__count">
+                  {outgoingTargets.length}
+                </span>
+              </div>
+              <DependencyList
+                items={outgoingTargets}
+                direction="outgoing"
+                onSelectNode={selectHandler}
+              />
+            </section>
 
-        <section className="detail-section">
-          <div className="detail-section__head">
-            <span className="detail-section__title">Incoming Dependents</span>
-            <span className="detail-section__count">
-              {incomingSources.length}
-            </span>
-          </div>
-          <DependencyList
-            items={incomingSources}
-            direction="incoming"
-            onSelectNode={selectHandler}
-          />
-        </section>
+            <section className="detail-section">
+              <div className="detail-section__head">
+                <span className="detail-section__title">Incoming Dependents</span>
+                <span className="detail-section__count">
+                  {incomingSources.length}
+                </span>
+              </div>
+              <DependencyList
+                items={incomingSources}
+                direction="incoming"
+                onSelectNode={selectHandler}
+              />
+            </section>
+          </>
+        )}
 
         <div style={{ padding: '16px', borderTop: '1px solid var(--border)', fontSize: '10px', color: 'var(--text-faint)' }}>
           <div><strong>Canonical ID:</strong></div>
           <div style={{ fontFamily: 'var(--font-mono, monospace)', wordBreak: 'break-all', marginTop: '2px' }}>
-            {backendNode.id}
+            {canonicalId}
           </div>
+          {sizeBytes > 0 && (
+            <div style={{ marginTop: '6px' }}>
+              <strong>Size:</strong> {(sizeBytes / 1024).toFixed(1)} KB ({sizeBytes} bytes)
+            </div>
+          )}
         </div>
       </aside>
     )
@@ -225,6 +333,39 @@ export default function DetailPanel({
           <div className="stat-box__label">Fan-in</div>
         </div>
       </div>
+
+      {/* Blast Radius / Impact Analysis Card */}
+      {impactAnalysis && impactAnalysis.totalAffectedCount > 0 && (
+        <div className="detail-impact-card">
+          <div className="detail-impact-header">
+            <span className="detail-impact-title">Blast Radius</span>
+            <span className="detail-impact-badge">
+              {impactAnalysis.isLowerBound ? `≥ ${impactAnalysis.blastRadiusPercentage}% (lower bound)` : `${impactAnalysis.blastRadiusPercentage}% of repo`}
+            </span>
+          </div>
+          <div className="detail-impact-bar-track">
+            <div
+              className="detail-impact-bar-fill"
+              style={{
+                width: `${Math.max(6, Math.min(100, impactAnalysis.blastRadiusPercentage))}%`,
+              }}
+            />
+          </div>
+          <div className="detail-impact-desc">
+            Modifying this file {impactAnalysis.isLowerBound ? 'impacts at least' : 'directly impacts'} <strong>{impactAnalysis.totalAffectedCount}</strong> downstream {impactAnalysis.totalAffectedCount === 1 ? 'file' : 'files'} ({impactAnalysis.analyzedCodePercentage}% of analyzed code, {impactAnalysis.blastRadiusPercentage}% of all files) across <strong>{impactAnalysis.maxDepthReached}</strong> caller {impactAnalysis.maxDepthReached === 1 ? 'level' : 'levels'}.
+          </div>
+          {impactAnalysis.truncated && (
+            <div className="detail-impact-sub" style={{ color: '#f59e0b', fontWeight: 600 }}>
+              ⚠ Incomplete result: bounded by {impactAnalysis.truncationReason === 'max_depth_exceeded' ? `depth limit (${impactAnalysis.maxDepthReached} levels)` : 'node limit'}. True blast radius may be larger.
+            </div>
+          )}
+          {impactAnalysis.cyclesDetected && (
+            <div className="detail-impact-sub">
+              Cyclic dependencies detected in downstream chain.
+            </div>
+          )}
+        </div>
+      )}
 
       <section className="detail-section">
         <div className="detail-section__head">

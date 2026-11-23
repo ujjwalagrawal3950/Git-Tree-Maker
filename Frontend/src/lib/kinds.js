@@ -6,6 +6,15 @@ export const KIND_META = {
   style: { label: 'Style', color: 'var(--kind-style)' },
   config: { label: 'Config', color: 'var(--kind-config)' },
   test: { label: 'Test', color: 'var(--kind-test)' },
+  doc: { label: 'Doc', color: 'var(--kind-doc)' },
+  source: { label: 'Source', color: 'var(--kind-source)' },
+  asset: { label: 'Asset', color: 'var(--kind-asset)' },
+  file: { label: 'File', color: 'var(--kind-file)' },
+  function: { label: 'Function', color: 'var(--kind-function)' },
+  constant: { label: 'Constant', color: 'var(--kind-constant)' },
+  class: { label: 'Class', color: 'var(--kind-class)' },
+  variable: { label: 'Variable', color: 'var(--kind-variable)' },
+  symbol: { label: 'Symbol', color: 'var(--kind-symbol)' },
 }
 
 export const KIND_ORDER = [
@@ -16,8 +25,14 @@ export const KIND_ORDER = [
   'style',
   'config',
   'test',
+  'doc',
+  'source',
+  'function',
+  'constant',
+  'class',
 ]
 
 export function getKindMeta(kind) {
-  return KIND_META[kind] ?? { label: kind, color: 'var(--text-faint)' }
+  const normalized = typeof kind === 'string' ? kind.toLowerCase() : ''
+  return KIND_META[normalized] ?? { label: kind || 'File', color: 'var(--text-faint)' }
 }

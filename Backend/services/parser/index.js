@@ -9,10 +9,17 @@ const { JavaAdapter } = require("./adapters/java/JavaAdapter");
 const { CAdapter } = require("./adapters/c/CAdapter");
 const { CppAdapter } = require("./adapters/cpp/CppAdapter");
 const { HeaderAdapter } = require("./adapters/c_cpp_shared/HeaderAdapter");
+const { extractHttpRequests } = require("./adapters/javascript/httpRequestExtractor");
+const {
+  extractExpressFacts,
+  getExpressRouteFacts,
+  expressFactStore,
+} = require("./adapters/javascript/expressRouteExtractor");
 const { JavaScriptModuleResolver } = require("./resolvers/javascript/JavaScriptModuleResolver");
 const { PythonImportResolver } = require("./resolvers/python/PythonImportResolver");
 const { JavaImportResolver } = require("./resolvers/java/JavaImportResolver");
 const { CppIncludeResolver } = require("./resolvers/c_cpp/CppIncludeResolver");
+const { HttpRouteResolver } = require("./resolvers/HttpRouteResolver");
 const irBuilder = require("./irBuilder");
 const irValidator = require("./irValidator");
 
@@ -52,7 +59,12 @@ module.exports = {
   PythonImportResolver,
   JavaImportResolver,
   CppIncludeResolver,
+  HttpRouteResolver,
   irBuilder,
   irValidator,
+  extractHttpRequests,
+  extractExpressFacts,
+  getExpressRouteFacts,
+  expressFactStore,
 };
 

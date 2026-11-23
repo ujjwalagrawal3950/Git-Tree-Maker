@@ -5,6 +5,7 @@ const {
   buildGraph,
   getGraphSummary,
   getNodes,
+  getEdges,
   getNodeDetails,
   getOutgoingEdges,
   getIncomingEdges,
@@ -27,6 +28,10 @@ routes.get("/organizations/:orgId/repositories/:repositoryId/graph", requireAuth
 // Node Queries
 routes.get("/repositories/:repositoryId/graph/nodes", requireAuth, asyncHandler(getNodes));
 routes.get("/organizations/:orgId/repositories/:repositoryId/graph/nodes", requireAuth, asyncHandler(getNodes));
+
+// Edge Queries
+routes.get("/repositories/:repositoryId/graph/edges", requireAuth, asyncHandler(getEdges));
+routes.get("/organizations/:orgId/repositories/:repositoryId/graph/edges", requireAuth, asyncHandler(getEdges));
 
 routes.get("/repositories/:repositoryId/graph/nodes/:nodeId", requireAuth, asyncHandler(getNodeDetails));
 routes.get("/organizations/:orgId/repositories/:repositoryId/graph/nodes/:nodeId", requireAuth, asyncHandler(getNodeDetails));

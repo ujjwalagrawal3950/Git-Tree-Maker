@@ -14,6 +14,7 @@ const userRoutes = require("./routes/userRoutes");
 const organizationRoutes = require("./routes/organizationRoutes");
 const repositoryRoutes = require("./routes/repositoryRoutes");
 const graphRoutes = require("./routes/graphRoutes");
+const ingestionRoutes = require("./routes/ingestionRoutes");
 
 const app = express();
 
@@ -59,6 +60,7 @@ app.use("/api", userRoutes);
 app.use("/api", organizationRoutes);
 app.use("/api", repositoryRoutes);
 app.use("/api", graphRoutes);
+app.use("/api", ingestionRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
